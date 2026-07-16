@@ -16,6 +16,7 @@ from app.services.errors import (
     BookingNotFoundError,
     InvalidBookingWindowError,
 )
+from app.services.timeutil import ensure_utc
 
 
 def _validate_window(start_at: datetime, end_at: datetime) -> None:
@@ -60,11 +61,13 @@ def find_conflicts(
     exclude_booking_id: int | None = None,
     for_update: bool = False,
 ) -> list[Booking]:
-    _validate_window(start_at, end_at)
+    start_utc = ensure_utc(start_at)
+    end_utc = ensure_utc(end_at)
+    _validate_window(start_utc, end_utc)
     stmt = _overlap_query(
         room_id,
-        start_at,
-        end_at,
+        start_utc,
+        end_utc,
         exclude_booking_id=exclude_booking_id,
     )
     if for_update:
@@ -101,25 +104,27 @@ def create_booking(
     room_id: int | None = None,
 ) -> Booking:
     """Create a confirmed booking or fail closed on overlap."""
-    _validate_window(start_at, end_at)
+    start_utc = ensure_utc(start_at)
+    end_utc = ensure_utc(end_at)
+    _validate_window(start_utc, end_utc)
     resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
 
     try:
         conflicts = find_conflicts(
             session,
             resolved_room_id,
-            start_at,
-            end_at,
+            start_utc,
+            end_utc,
             for_update=True,
         )
-        _raise_if_conflicts(conflicts, start_at=start_at, end_at=end_at)
+        _raise_if_conflicts(conflicts, start_at=start_utc, end_at=end_utc)
 
         booking = Booking(
             room_id=resolved_room_id,
             associate_id=associate_id,
             purpose=purpose,
-            start_at=start_at,
-            end_at=end_at,
+            start_at=start_utc,
+            end_at=end_utc,
             status=BookingStatus.confirmed,
         )
         session.add(booking)
@@ -139,7 +144,9 @@ def update_booking_window(
     end_at: datetime,
 ) -> Booking:
     """Move a booking to a new window or fail closed on overlap."""
-    _validate_window(start_at, end_at)
+    start_utc = ensure_utc(start_at)
+    end_utc = ensure_utc(end_at)
+    _validate_window(start_utc, end_utc)
 
     try:
         booking = session.get(Booking, booking_id, with_for_update=True)
@@ -149,15 +156,15 @@ def update_booking_window(
         conflicts = find_conflicts(
             session,
             booking.room_id,
-            start_at,
-            end_at,
+            start_utc,
+            end_utc,
             exclude_booking_id=booking.id,
             for_update=True,
         )
-        _raise_if_conflicts(conflicts, start_at=start_at, end_at=end_at)
+        _raise_if_conflicts(conflicts, start_at=start_utc, end_at=end_utc)
 
-        booking.start_at = start_at
-        booking.end_at = end_at
+        booking.start_at = start_utc
+        booking.end_at = end_utc
         session.commit()
         session.refresh(booking)
         return booking
