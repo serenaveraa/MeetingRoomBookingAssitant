@@ -74,4 +74,6 @@ py -3 -m streamlit run app.py
 
 See [`.env.example`](.env.example) for all variables. Architecture: [`architecture.md`](architecture.md).
 
+For the LangGraph agent (live LLM calls), set `OPENAI_API_KEY` **or** Azure OpenAI vars (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`). Unit tests mock the model and do not call the network.
+
 CI runs backend tests on pushes/PRs to `develop` and `main` (Postgres service + `pytest`).
