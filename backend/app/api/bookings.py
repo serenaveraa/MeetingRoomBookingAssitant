@@ -68,6 +68,7 @@ def _conflict_http(exc: BookingConflictError) -> HTTPException:
                 start_at=exc.conflicting_start_at,
                 end_at=exc.conflicting_end_at,
             ).model_dump(mode="json"),
+            "conflicting_associate_name": exc.conflicting_associate_name,
         },
     )
 
