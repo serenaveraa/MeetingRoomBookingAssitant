@@ -8,6 +8,7 @@ import httpx
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT = 10.0
+CHAT_TIMEOUT = 90.0
 
 
 class ApiError(RuntimeError):
@@ -55,3 +56,42 @@ def list_bookings(
         return data
     except httpx.HTTPError as exc:
         raise ApiError(f"Failed to load bookings from {url}: {exc}") from exc
+
+
+def post_chat(
+    message: str,
+    *,
+    associate_email: str,
+    associate_name: str,
+    conversation_id: str | None = None,
+    base_url: str | None = None,
+    timeout: float = CHAT_TIMEOUT,
+) -> dict[str, Any]:
+    url = f"{base_url or get_api_base_url()}/agent/chat"
+    payload: dict[str, Any] = {
+        "message": message,
+        "associate_email": associate_email,
+        "associate_name": associate_name,
+    }
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    try:
+        response = httpx.post(url, json=payload, timeout=timeout)
+        if response.status_code >= 400:
+            detail = _error_detail(response)
+            raise ApiError(f"Chat failed ({response.status_code}): {detail}")
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ApiError("Unexpected /agent/chat response shape")
+        return data
+    except httpx.HTTPError as exc:
+        raise ApiError(f"Failed to reach chat API at {url}: {exc}") from exc
+
+
+def _error_detail(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+        detail = body.get("detail", body)
+        return str(detail)
+    except Exception:
+        return response.text or response.reason_phrase
