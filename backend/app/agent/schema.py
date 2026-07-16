@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -52,3 +53,5 @@ class AgentTurn(BaseModel):
     associate_email: str
     associate_name: str
     user_message: str
+    tool_results: list[dict[str, Any]] = Field(default_factory=list)
+    final_message: str = ""

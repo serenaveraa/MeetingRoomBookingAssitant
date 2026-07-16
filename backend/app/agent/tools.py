@@ -1,0 +1,418 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any
+
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.agent.entities import EntityResolutionError, resolve_booking_window, resolve_day
+from app.agent.schema import AgentDecision, Intent
+from app.models import Booking
+from app.services.associates import get_or_create_associate
+from app.services.availability import (
+    DEFAULT_ALTERNATIVE_LIMIT,
+    check_availability as svc_check_availability,
+    suggest_alternatives as svc_suggest_alternatives,
+)
+from app.services.booking import (
+    cancel_my_meeting,
+    create_booking as svc_create_booking,
+    extend_my_meeting,
+    list_my_bookings as svc_list_my_bookings,
+)
+from app.services.errors import (
+    BookingConflictError,
+    BookingServiceError,
+    InvalidBookingWindowError,
+    MyMeetingNotFoundError,
+)
+from app.services.timeutil import as_utc
+from app.services.utilization import (
+    get_utilization_summary as svc_get_utilization_summary,
+    local_today,
+)
+
+
+class WindowArgs(BaseModel):
+    start_at: datetime
+    end_at: datetime
+
+
+class CreateBookingArgs(WindowArgs):
+    purpose: str | None = None
+
+
+class SuggestAlternativesArgs(WindowArgs):
+    limit: int = Field(default=DEFAULT_ALTERNATIVE_LIMIT, ge=1, le=10)
+
+
+class ExtendBookingArgs(BaseModel):
+    minutes: int = Field(ge=1)
+
+
+class ListMyBookingsArgs(WindowArgs):
+    pass
+
+
+class UtilizationArgs(BaseModel):
+    day: date
+
+
+@dataclass
+class ToolContext:
+    session: Session
+    associate_email: str
+    associate_name: str
+
+
+class ToolResult(BaseModel):
+    tool: str
+    ok: bool
+    data: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    error_type: str | None = None
+
+
+def _iso(dt: datetime) -> str:
+    return as_utc(dt).isoformat()
+
+
+def _booking_payload(booking: Booking) -> dict[str, Any]:
+    return {
+        "id": booking.id,
+        "associate_id": booking.associate_id,
+        "purpose": booking.purpose,
+        "start_at": _iso(booking.start_at),
+        "end_at": _iso(booking.end_at),
+        "status": booking.status.value if hasattr(booking.status, "value") else booking.status,
+    }
+
+
+def _conflict_payload(exc: BookingConflictError) -> dict[str, Any]:
+    return {
+        "conflicting_booking_id": exc.conflicting_booking_id,
+        "conflicting_associate_id": exc.conflicting_associate_id,
+        "conflicting_associate_name": exc.conflicting_associate_name,
+        "conflicting_start_at": _iso(exc.conflicting_start_at),
+        "conflicting_end_at": _iso(exc.conflicting_end_at),
+        "requested_start_at": _iso(exc.start_at),
+        "requested_end_at": _iso(exc.end_at),
+    }
+
+
+def _fail(tool: str, exc: Exception, *, data: dict[str, Any] | None = None) -> ToolResult:
+    return ToolResult(
+        tool=tool,
+        ok=False,
+        data=data or {},
+        error=str(exc),
+        error_type=type(exc).__name__,
+    )
+
+
+def tool_check_availability(ctx: ToolContext, args: WindowArgs) -> ToolResult:
+    try:
+        result = svc_check_availability(ctx.session, args.start_at, args.end_at)
+        data: dict[str, Any] = {
+            "available": result.available,
+            "start_at": _iso(result.requested.start_at),
+            "end_at": _iso(result.requested.end_at),
+        }
+        if result.conflict is not None:
+            data["conflict"] = _booking_payload(result.conflict)
+        return ToolResult(tool="check_availability", ok=True, data=data)
+    except (InvalidBookingWindowError, BookingServiceError) as exc:
+        return _fail("check_availability", exc)
+
+
+def tool_create_booking(ctx: ToolContext, args: CreateBookingArgs) -> ToolResult:
+    try:
+        associate = get_or_create_associate(
+            ctx.session,
+            email=ctx.associate_email,
+            name=ctx.associate_name,
+        )
+        booking = svc_create_booking(
+            ctx.session,
+            associate_id=associate.id,
+            start_at=args.start_at,
+            end_at=args.end_at,
+            purpose=args.purpose,
+        )
+        return ToolResult(
+            tool="create_booking",
+            ok=True,
+            data=_booking_payload(booking),
+        )
+    except BookingConflictError as exc:
+        return _fail("create_booking", exc, data=_conflict_payload(exc))
+    except (InvalidBookingWindowError, BookingServiceError) as exc:
+        return _fail("create_booking", exc)
+
+
+def tool_suggest_alternatives(
+    ctx: ToolContext, args: SuggestAlternativesArgs
+) -> ToolResult:
+    try:
+        windows = svc_suggest_alternatives(
+            ctx.session,
+            args.start_at,
+            args.end_at,
+            limit=args.limit,
+        )
+        return ToolResult(
+            tool="suggest_alternatives",
+            ok=True,
+            data={
+                "alternatives": [
+                    {"start_at": _iso(w.start_at), "end_at": _iso(w.end_at)}
+                    for w in windows
+                ]
+            },
+        )
+    except (InvalidBookingWindowError, BookingServiceError) as exc:
+        return _fail("suggest_alternatives", exc)
+
+
+def tool_extend_booking(ctx: ToolContext, args: ExtendBookingArgs) -> ToolResult:
+    try:
+        associate = get_or_create_associate(
+            ctx.session,
+            email=ctx.associate_email,
+            name=ctx.associate_name,
+        )
+        booking = extend_my_meeting(
+            ctx.session, associate.id, minutes=args.minutes
+        )
+        return ToolResult(
+            tool="extend_booking",
+            ok=True,
+            data={**_booking_payload(booking), "extended_by_minutes": args.minutes},
+        )
+    except BookingConflictError as exc:
+        return _fail("extend_booking", exc, data=_conflict_payload(exc))
+    except (MyMeetingNotFoundError, BookingServiceError, ValueError) as exc:
+        return _fail("extend_booking", exc)
+
+
+def tool_cancel_booking(ctx: ToolContext) -> ToolResult:
+    try:
+        associate = get_or_create_associate(
+            ctx.session,
+            email=ctx.associate_email,
+            name=ctx.associate_name,
+        )
+        booking = cancel_my_meeting(ctx.session, associate.id)
+        return ToolResult(
+            tool="cancel_booking",
+            ok=True,
+            data=_booking_payload(booking),
+        )
+    except (MyMeetingNotFoundError, BookingServiceError) as exc:
+        return _fail("cancel_booking", exc)
+
+
+def tool_list_my_bookings(ctx: ToolContext, args: ListMyBookingsArgs) -> ToolResult:
+    try:
+        associate = get_or_create_associate(
+            ctx.session,
+            email=ctx.associate_email,
+            name=ctx.associate_name,
+        )
+        bookings = svc_list_my_bookings(
+            ctx.session,
+            associate.id,
+            start_at=args.start_at,
+            end_at=args.end_at,
+        )
+        return ToolResult(
+            tool="list_my_bookings",
+            ok=True,
+            data={"bookings": [_booking_payload(b) for b in bookings]},
+        )
+    except (InvalidBookingWindowError, BookingServiceError) as exc:
+        return _fail("list_my_bookings", exc)
+
+
+def tool_get_utilization_summary(
+    ctx: ToolContext, args: UtilizationArgs
+) -> ToolResult:
+    try:
+        summary = svc_get_utilization_summary(ctx.session, day=args.day)
+        return ToolResult(
+            tool="get_utilization_summary",
+            ok=True,
+            data={
+                "day": summary.day.isoformat(),
+                "booking_count": summary.booking_count,
+                "total_booked_minutes": summary.total_booked_minutes,
+                "avg_duration_minutes": summary.avg_duration_minutes,
+                "idle_gap_count": summary.idle_gap_count,
+                "business_minutes": summary.business_minutes,
+            },
+        )
+    except BookingServiceError as exc:
+        return _fail("get_utilization_summary", exc)
+
+
+def _window_from_decision(decision: AgentDecision) -> tuple[datetime, datetime]:
+    return resolve_booking_window(decision.entities)
+
+
+def run_tools_for_intent(
+    decision: AgentDecision, ctx: ToolContext
+) -> list[ToolResult]:
+    """Deterministically invoke tools for the extracted intent."""
+    if decision.needs_clarification or decision.intent == Intent.other:
+        return []
+
+    results: list[ToolResult] = []
+
+    if decision.intent == Intent.availability:
+        try:
+            start_at, end_at = _window_from_decision(decision)
+        except EntityResolutionError as exc:
+            return [_fail("check_availability", exc)]
+        results.append(
+            tool_check_availability(ctx, WindowArgs(start_at=start_at, end_at=end_at))
+        )
+        return results
+
+    if decision.intent == Intent.book:
+        try:
+            start_at, end_at = _window_from_decision(decision)
+        except EntityResolutionError as exc:
+            return [_fail("create_booking", exc)]
+        create_result = tool_create_booking(
+            ctx,
+            CreateBookingArgs(
+                start_at=start_at,
+                end_at=end_at,
+                purpose=decision.entities.purpose,
+            ),
+        )
+        results.append(create_result)
+        if not create_result.ok and create_result.error_type == "BookingConflictError":
+            results.append(
+                tool_suggest_alternatives(
+                    ctx,
+                    SuggestAlternativesArgs(start_at=start_at, end_at=end_at),
+                )
+            )
+        return results
+
+    if decision.intent == Intent.extend:
+        minutes = decision.entities.duration_minutes
+        if minutes is None or minutes <= 0:
+            return [
+                _fail(
+                    "extend_booking",
+                    EntityResolutionError("duration_minutes is required to extend"),
+                )
+            ]
+        results.append(
+            tool_extend_booking(ctx, ExtendBookingArgs(minutes=minutes))
+        )
+        return results
+
+    if decision.intent == Intent.cancel:
+        results.append(tool_cancel_booking(ctx))
+        return results
+
+    if decision.intent == Intent.insights:
+        day = resolve_day(decision.entities.date, today=local_today())
+        results.append(
+            tool_get_utilization_summary(ctx, UtilizationArgs(day=day))
+        )
+        return results
+
+    return results
+
+
+def compose_reply(decision: AgentDecision, results: list[ToolResult]) -> str:
+    """Deterministic user-facing message from tool outcomes."""
+    if decision.needs_clarification:
+        return decision.assistant_message or decision.clarification_question or (
+            "I need a bit more detail before I can continue."
+        )
+
+    if not results:
+        return decision.assistant_message or "How can I help with the meeting room?"
+
+    by_name = {r.tool: r for r in results}
+    primary = results[0]
+
+    if primary.tool == "check_availability":
+        if not primary.ok:
+            return f"I couldn't check availability: {primary.error}"
+        if primary.data.get("available"):
+            return (
+                f"The room is free from {primary.data['start_at']} "
+                f"to {primary.data['end_at']}."
+            )
+        return (
+            f"The room is busy from {primary.data['start_at']} "
+            f"to {primary.data['end_at']}."
+        )
+
+    if primary.tool == "create_booking":
+        if primary.ok:
+            return (
+                f"Booked the room from {primary.data['start_at']} "
+                f"to {primary.data['end_at']} (booking #{primary.data['id']})."
+            )
+        alts = by_name.get("suggest_alternatives")
+        lines = [f"That slot isn't available: {primary.error}"]
+        if alts and alts.ok and alts.data.get("alternatives"):
+            lines.append("Nearest alternatives:")
+            for window in alts.data["alternatives"]:
+                lines.append(f"- {window['start_at']} → {window['end_at']}")
+        elif alts and alts.ok:
+            lines.append("I couldn't find another free slot of that length today.")
+        return "\n".join(lines)
+
+    if primary.tool == "extend_booking":
+        if primary.ok:
+            return (
+                f"Extended your meeting by {primary.data['extended_by_minutes']} "
+                f"minutes (now ends {primary.data['end_at']})."
+            )
+        return f"Couldn't extend your meeting: {primary.error}"
+
+    if primary.tool == "cancel_booking":
+        if primary.ok:
+            return (
+                f"Cancelled your booking #{primary.data['id']} "
+                f"({primary.data['start_at']} → {primary.data['end_at']})."
+            )
+        return f"Couldn't cancel your meeting: {primary.error}"
+
+    if primary.tool == "list_my_bookings":
+        if not primary.ok:
+            return f"Couldn't list your bookings: {primary.error}"
+        bookings = primary.data.get("bookings") or []
+        if not bookings:
+            return "You have no bookings in that window."
+        lines = ["Your bookings:"]
+        for booking in bookings:
+            lines.append(
+                f"- #{booking['id']}: {booking['start_at']} → {booking['end_at']}"
+            )
+        return "\n".join(lines)
+
+    if primary.tool == "get_utilization_summary":
+        if not primary.ok:
+            return f"Couldn't load utilization: {primary.error}"
+        d = primary.data
+        return (
+            f"Utilization for {d['day']}: {d['booking_count']} booking(s), "
+            f"{d['total_booked_minutes']} booked minutes "
+            f"(avg {d['avg_duration_minutes']} min), "
+            f"{d['idle_gap_count']} idle gap(s) within business hours."
+        )
+
+    if primary.ok:
+        return decision.assistant_message or "Done."
+    return primary.error or decision.assistant_message or "Something went wrong."
