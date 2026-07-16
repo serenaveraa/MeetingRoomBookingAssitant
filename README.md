@@ -62,18 +62,26 @@ cd backend
 - Unit tests (`test_models.py`) use in-memory SQLite only for speed
 - Integration tests (`test_postgres_init.py`) require Docker Postgres and skip if it is down
 
-## 3. Frontend
+## 3. Frontend (Streamlit calendar)
+
+Requires the backend API running (step 2). Use a **frontend venv** so Streamlit deps do not clash with other global packages.
 
 ```bash
 cd frontend
-py -3 -m pip install -r requirements.txt
-py -3 -m streamlit run app.py
+py -3 -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt
+# optional: set API_BASE_URL if the API is not on localhost:8000
+set API_BASE_URL=http://127.0.0.1:8000
+.venv/Scripts/python.exe -m streamlit run app.py
 ```
+
+The calendar day view loads confirmed bookings from `GET /bookings`, shows free gaps within business hours (08:00–18:00 ODC time), and stores associate name/email in the Streamlit session (sidebar).
 
 ## Configuration
 
 See [`.env.example`](.env.example) for all variables. Architecture: [`architecture.md`](architecture.md).
 
-For the LangGraph agent (live LLM calls), set `GROQ_API_KEY` (recommended free tier), or `OPENAI_API_KEY`, or Azure OpenAI vars (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`). Unit tests mock the model and do not call the network.
+- `API_BASE_URL` — FastAPI base URL for the Streamlit UI (default `http://127.0.0.1:8000`)
+- For the LangGraph agent (live LLM calls), set `GROQ_API_KEY` (recommended free tier), or `OPENAI_API_KEY`, or Azure OpenAI vars (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`). Unit tests mock the model and do not call the network.
 
 CI runs backend tests on pushes/PRs to `develop` and `main` (Postgres service + `pytest`).
