@@ -6,7 +6,7 @@ A single shared ODC meeting room is managed by an AI agent that understands natu
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Streamlit  │────▶│  FastAPI Backend │────▶│  SQLite/Postgres│
+│  Streamlit  │────▶│  FastAPI Backend │────▶│  Postgres (Docker)│
 │  Frontend   │◀────│                  │◀────│                 │
 └─────────────┘     │  ┌────────────┐  │     └─────────────────┘
                     │  │ LangGraph  │  │
@@ -176,9 +176,9 @@ Room
 **Constraints:**
 
 - `CHECK (end_at > start_at)`
-- No overlapping `confirmed` bookings for the same room (PostgreSQL `EXCLUDE USING gist`; SQLite via application-level lock + careful queries)
+- No overlapping `confirmed` bookings for the same room (PostgreSQL `EXCLUDE USING gist` in phase 5; app-level checks until then)
 
-**DB choice:** PostgreSQL in Docker for development and production paths (exclusion constraints + better concurrency). SQLite only as an offline scaffold fallback.
+**DB choice:** **PostgreSQL in Docker** is required for local development and runtime (`docker compose up -d db`). In-memory SQLite is used only in fast unit tests, not as an app runtime database.
 
 ## 4. Request Flows
 
@@ -240,17 +240,18 @@ MeetingRoomBookingAssitant/
 
 ### 5.1 Runtime: Docker for the database
 
-- **Postgres runs in Docker** via `docker compose up -d db` (see `docker-compose.yml`).
+- **Postgres runs in Docker** via `docker compose up -d db` (see `docker-compose.yml`). Start this before the API.
 - Backend and Streamlit run on the host for local development; full app containerization can be added later if needed.
 - Default compose credentials: user/password `odc`, database `meeting_room`, port `5432`.
-- Preferred `DATABASE_URL`: `postgresql+psycopg://odc:odc@localhost:5432/meeting_room`
-- SQLite is only for offline scaffold demos until models/migrations are in place.
+- Required `DATABASE_URL`: `postgresql+psycopg://odc:odc@localhost:5432/meeting_room`
+- On API startup, `init_db()` creates tables and seeds the single ODC common room.
+- In-memory SQLite appears only in unit tests (`tests/test_models.py`); integration tests hit Docker Postgres (`tests/test_postgres_init.py`).
 
 ## 6. Configuration
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | Prefer Docker Postgres URL; SQLite only for offline demo |
+| `DATABASE_URL` | Docker Postgres URL (required for running the app) |
 | `OPENAI_API_KEY` / Azure OpenAI settings | LLM access |
 | `ODC_TIMEZONE` | e.g. `America/Sao_Paulo` |
 | `BREVO_API_KEY` | Brevo transactional email API key |
