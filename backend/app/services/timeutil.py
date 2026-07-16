@@ -15,3 +15,10 @@ def ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=get_odc_tz())
     return dt.astimezone(timezone.utc)
+
+
+def as_utc(dt: datetime) -> datetime:
+    """Normalize datetimes to UTC; naive values are assumed already UTC (e.g. SQLite)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
