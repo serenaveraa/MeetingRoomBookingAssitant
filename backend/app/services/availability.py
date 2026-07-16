@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import Booking, BookingStatus
 from app.services.booking import find_conflicts, get_odc_room
 from app.services.errors import InvalidBookingWindowError
-from app.services.timeutil import ensure_utc, get_odc_tz
+from app.services.timeutil import as_utc, ensure_utc, get_odc_tz
 
 BUSINESS_DAY_START = time(8, 0)
 BUSINESS_DAY_END = time(18, 0)
@@ -128,7 +128,7 @@ def suggest_alternatives(
 
     bookings = _confirmed_bookings_for_day(session, resolved_room_id, local_day)
     occupied = [
-        (ensure_utc(b.start_at), ensure_utc(b.end_at)) for b in bookings
+        (as_utc(b.start_at), as_utc(b.end_at)) for b in bookings
     ]
     gaps = _free_gaps(occupied, biz_start, biz_end)
 

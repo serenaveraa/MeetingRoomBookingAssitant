@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from app.services.errors import (
     BookingNotFoundError,
     InvalidBookingWindowError,
 )
-from app.services.timeutil import ensure_utc
+from app.services.timeutil import as_utc, ensure_utc
 
 
 def _validate_window(start_at: datetime, end_at: datetime) -> None:
@@ -187,3 +187,52 @@ def cancel_booking(session: Session, booking_id: int) -> Booking:
     except Exception:
         session.rollback()
         raise
+
+
+def extend_booking(
+    session: Session,
+    booking_id: int,
+    *,
+    minutes: int,
+) -> Booking:
+    """Extend a confirmed booking's end time by minutes, or fail closed on conflict."""
+    if minutes <= 0:
+        raise ValueError("minutes must be a positive integer")
+
+    booking = session.get(Booking, booking_id)
+    if booking is None:
+        raise BookingNotFoundError(booking_id)
+    if booking.status != BookingStatus.confirmed:
+        raise BookingNotFoundError(booking_id)
+
+    new_end = as_utc(booking.end_at) + timedelta(minutes=minutes)
+    return update_booking_window(
+        session,
+        booking_id,
+        start_at=as_utc(booking.start_at),
+        end_at=new_end,
+    )
+
+
+def list_bookings(
+    session: Session,
+    *,
+    start_at: datetime,
+    end_at: datetime,
+    status: BookingStatus | None = BookingStatus.confirmed,
+    room_id: int | None = None,
+) -> list[Booking]:
+    start_utc = ensure_utc(start_at)
+    end_utc = ensure_utc(end_at)
+    _validate_window(start_utc, end_utc)
+    resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
+
+    stmt = select(Booking).where(
+        Booking.room_id == resolved_room_id,
+        Booking.start_at < end_utc,
+        Booking.end_at > start_utc,
+    )
+    if status is not None:
+        stmt = stmt.where(Booking.status == status)
+    stmt = stmt.order_by(Booking.start_at)
+    return list(session.scalars(stmt).all())
