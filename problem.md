@@ -102,6 +102,6 @@ At **10:45 AM**, the AI sends:
 |---|---|
 | Backend | Python, FastAPI |
 | AI Layer | LangChain / LangGraph, OpenAI / Azure OpenAI |
-| Database | SQLite / PostgreSQL |
+| Database | PostgreSQL (Docker Compose) |
 | Notification Service | Email, Teams Notification |
 | Frontend | Streamlit |
