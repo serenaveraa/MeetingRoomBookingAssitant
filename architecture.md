@@ -178,7 +178,7 @@ Room
 - `CHECK (end_at > start_at)`
 - No overlapping `confirmed` bookings for the same room (PostgreSQL `EXCLUDE USING gist`; SQLite via application-level lock + careful queries)
 
-**DB choice:** SQLite for local demo; PostgreSQL for multi-user / production (exclusion constraints + better concurrency).
+**DB choice:** PostgreSQL in Docker for development and production paths (exclusion constraints + better concurrency). SQLite only as an offline scaffold fallback.
 
 ## 4. Request Flows
 
@@ -220,6 +220,7 @@ MeetingRoomBookingAssitant/
 ├── problem.md
 ├── architecture.md
 ├── README.md
+├── docker-compose.yml           # Postgres (required for shared/dev DB)
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI entry
@@ -237,11 +238,19 @@ MeetingRoomBookingAssitant/
 └── .env.example
 ```
 
+### 5.1 Runtime: Docker for the database
+
+- **Postgres runs in Docker** via `docker compose up -d db` (see `docker-compose.yml`).
+- Backend and Streamlit run on the host for local development; full app containerization can be added later if needed.
+- Default compose credentials: user/password `odc`, database `meeting_room`, port `5432`.
+- Preferred `DATABASE_URL`: `postgresql+psycopg://odc:odc@localhost:5432/meeting_room`
+- SQLite is only for offline scaffold demos until models/migrations are in place.
+
 ## 6. Configuration
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | SQLite or Postgres connection |
+| `DATABASE_URL` | Prefer Docker Postgres URL; SQLite only for offline demo |
 | `OPENAI_API_KEY` / Azure OpenAI settings | LLM access |
 | `ODC_TIMEZONE` | e.g. `America/Sao_Paulo` |
 | `BREVO_API_KEY` | Brevo transactional email API key |
@@ -269,7 +278,7 @@ MeetingRoomBookingAssitant/
 | **2 – AI agent** | LangGraph + tools wired to booking service; chat UI |
 | **3 – Notifications** | Brevo transactional email + optional Teams; 15-minute vacate scheduler |
 | **4 – Waitlist & insights** | Cancellation waitlist notify; utilization dashboard |
-| **5 – Hardening** | Postgres exclusion constraints, tests, auth polish |
+| **5 – Hardening** | Postgres exclusion constraints (on Docker DB), tests, auth polish |
 
 ## 9. Out of Scope (initial)
 
