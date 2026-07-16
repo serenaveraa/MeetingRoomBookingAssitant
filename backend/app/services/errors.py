@@ -17,9 +17,17 @@ class InvalidBookingWindowError(BookingServiceError):
 
 
 class BookingNotFoundError(BookingServiceError):
-    def __init__(self, booking_id: int) -> None:
+    def __init__(self, booking_id: int | None = None, *, message: str | None = None) -> None:
         self.booking_id = booking_id
-        super().__init__(f"Booking {booking_id} not found")
+        super().__init__(message or f"Booking {booking_id} not found")
+
+
+class MyMeetingNotFoundError(BookingServiceError):
+    def __init__(self, associate_id: int) -> None:
+        self.associate_id = associate_id
+        super().__init__(
+            f"No current or upcoming confirmed meeting found for associate {associate_id}"
+        )
 
 
 class BookingConflictError(BookingServiceError):
@@ -32,6 +40,7 @@ class BookingConflictError(BookingServiceError):
         conflicting_start_at: datetime,
         conflicting_end_at: datetime,
         conflicting_associate_id: int | None = None,
+        conflicting_associate_name: str | None = None,
     ) -> None:
         self.start_at = start_at
         self.end_at = end_at
@@ -39,8 +48,13 @@ class BookingConflictError(BookingServiceError):
         self.conflicting_start_at = conflicting_start_at
         self.conflicting_end_at = conflicting_end_at
         self.conflicting_associate_id = conflicting_associate_id
+        self.conflicting_associate_name = conflicting_associate_name
+        who = conflicting_associate_name or (
+            f"associate {conflicting_associate_id}"
+            if conflicting_associate_id is not None
+            else "another associate"
+        )
         super().__init__(
-            "Booking conflict with confirmed booking "
-            f"{conflicting_booking_id} "
-            f"[{conflicting_start_at}, {conflicting_end_at})"
+            "Extension not possible. "
+            f"Room reserved by {who} starting at {conflicting_start_at}."
         )

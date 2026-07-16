@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
     ODC_COMMON_ROOM_NAME,
@@ -15,6 +15,7 @@ from app.services.errors import (
     BookingConflictError,
     BookingNotFoundError,
     InvalidBookingWindowError,
+    MyMeetingNotFoundError,
 )
 from app.services.timeutil import as_utc, ensure_utc
 
@@ -69,10 +70,10 @@ def find_conflicts(
         start_utc,
         end_utc,
         exclude_booking_id=exclude_booking_id,
-    )
+    ).options(joinedload(Booking.associate))
     if for_update:
         stmt = stmt.with_for_update()
-    return list(session.scalars(stmt).all())
+    return list(session.scalars(stmt).unique().all())
 
 
 def _raise_if_conflicts(
@@ -84,13 +85,15 @@ def _raise_if_conflicts(
     if not conflicts:
         return
     conflict = conflicts[0]
+    associate_name = conflict.associate.name if conflict.associate else None
     raise BookingConflictError(
         start_at=start_at,
         end_at=end_at,
         conflicting_booking_id=conflict.id,
-        conflicting_start_at=conflict.start_at,
-        conflicting_end_at=conflict.end_at,
+        conflicting_start_at=as_utc(conflict.start_at),
+        conflicting_end_at=as_utc(conflict.end_at),
         conflicting_associate_id=conflict.associate_id,
+        conflicting_associate_name=associate_name,
     )
 
 
@@ -236,3 +239,92 @@ def list_bookings(
         stmt = stmt.where(Booking.status == status)
     stmt = stmt.order_by(Booking.start_at)
     return list(session.scalars(stmt).all())
+
+
+def find_current_booking(
+    session: Session,
+    associate_id: int,
+    *,
+    at: datetime | None = None,
+    room_id: int | None = None,
+) -> Booking | None:
+    """Confirmed booking owned by associate that is in progress at `at`."""
+    moment = as_utc(at) if at is not None else datetime.now(timezone.utc)
+    resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
+    stmt = (
+        select(Booking)
+        .where(
+            Booking.room_id == resolved_room_id,
+            Booking.associate_id == associate_id,
+            Booking.status == BookingStatus.confirmed,
+            Booking.start_at <= moment,
+            Booking.end_at > moment,
+        )
+        .order_by(Booking.start_at.desc())
+        .options(joinedload(Booking.associate))
+    )
+    return session.scalars(stmt).first()
+
+
+def find_next_booking(
+    session: Session,
+    associate_id: int,
+    *,
+    at: datetime | None = None,
+    room_id: int | None = None,
+) -> Booking | None:
+    """Next upcoming confirmed booking owned by associate at/after `at`."""
+    moment = as_utc(at) if at is not None else datetime.now(timezone.utc)
+    resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
+    stmt = (
+        select(Booking)
+        .where(
+            Booking.room_id == resolved_room_id,
+            Booking.associate_id == associate_id,
+            Booking.status == BookingStatus.confirmed,
+            Booking.start_at >= moment,
+        )
+        .order_by(Booking.start_at)
+        .options(joinedload(Booking.associate))
+    )
+    return session.scalars(stmt).first()
+
+
+def resolve_my_meeting(
+    session: Session,
+    associate_id: int,
+    *,
+    at: datetime | None = None,
+    room_id: int | None = None,
+) -> Booking:
+    """Resolve “my meeting” to the current booking, else the next upcoming one."""
+    current = find_current_booking(
+        session, associate_id, at=at, room_id=room_id
+    )
+    if current is not None:
+        return current
+    upcoming = find_next_booking(session, associate_id, at=at, room_id=room_id)
+    if upcoming is not None:
+        return upcoming
+    raise MyMeetingNotFoundError(associate_id)
+
+
+def extend_my_meeting(
+    session: Session,
+    associate_id: int,
+    *,
+    minutes: int,
+    at: datetime | None = None,
+) -> Booking:
+    booking = resolve_my_meeting(session, associate_id, at=at)
+    return extend_booking(session, booking.id, minutes=minutes)
+
+
+def cancel_my_meeting(
+    session: Session,
+    associate_id: int,
+    *,
+    at: datetime | None = None,
+) -> Booking:
+    booking = resolve_my_meeting(session, associate_id, at=at)
+    return cancel_booking(session, booking.id)
