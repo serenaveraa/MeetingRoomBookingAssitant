@@ -77,7 +77,7 @@ set API_BASE_URL=http://127.0.0.1:8000
 .venv/Scripts/python.exe -m streamlit run app.py
 ```
 
-The calendar day view loads confirmed bookings from `GET /bookings`, shows free gaps within business hours (08:00–18:00 ODC time), and stores associate name/email in the Streamlit session (sidebar).
+The calendar day view loads confirmed bookings from `GET /bookings`, shows free gaps within business hours (08:00–18:00 ODC time), and stores associate name/email in the Streamlit session (sidebar). The **Chat** tab talks to `POST /agent/chat` with that identity and keeps conversation history in the session.
 
 ## Configuration
 
