@@ -50,6 +50,8 @@ On startup the API runs `init_db()` against Postgres (creates tables + seeds **O
 
 Health check: http://127.0.0.1:8000/health
 
+Natural-language agent: `POST /agent/chat` with JSON `{ "message", "associate_email", "associate_name", "conversation_id?" }` (requires `GROQ_API_KEY` or other LLM settings for live calls).
+
 ### Tests
 
 With Docker Postgres running:
