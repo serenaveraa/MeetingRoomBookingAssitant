@@ -70,9 +70,12 @@ def find_conflicts(
         start_utc,
         end_utc,
         exclude_booking_id=exclude_booking_id,
-    ).options(joinedload(Booking.associate))
+    )
     if for_update:
-        stmt = stmt.with_for_update()
+        # Lock only bookings rows — joinedload + FOR UPDATE breaks on Postgres
+        # (outer join to associates).
+        stmt = stmt.with_for_update(of=Booking)
+    stmt = stmt.options(joinedload(Booking.associate))
     return list(session.scalars(stmt).unique().all())
 
 
@@ -239,6 +242,33 @@ def list_bookings(
         stmt = stmt.where(Booking.status == status)
     stmt = stmt.order_by(Booking.start_at)
     return list(session.scalars(stmt).all())
+
+
+def list_my_bookings(
+    session: Session,
+    associate_id: int,
+    *,
+    start_at: datetime,
+    end_at: datetime,
+    status: BookingStatus | None = BookingStatus.confirmed,
+    room_id: int | None = None,
+) -> list[Booking]:
+    """Confirmed (or filtered) bookings owned by associate in [start_at, end_at)."""
+    start_utc = ensure_utc(start_at)
+    end_utc = ensure_utc(end_at)
+    _validate_window(start_utc, end_utc)
+    resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
+
+    stmt = select(Booking).where(
+        Booking.room_id == resolved_room_id,
+        Booking.associate_id == associate_id,
+        Booking.start_at < end_utc,
+        Booking.end_at > start_utc,
+    )
+    if status is not None:
+        stmt = stmt.where(Booking.status == status)
+    stmt = stmt.order_by(Booking.start_at).options(joinedload(Booking.associate))
+    return list(session.scalars(stmt).unique().all())
 
 
 def find_current_booking(

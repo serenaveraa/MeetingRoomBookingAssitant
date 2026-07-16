@@ -6,6 +6,12 @@ from app.agent.schema import (
     ExtractedEntities,
     Intent,
 )
+from app.agent.tools import (
+    ToolContext,
+    ToolResult,
+    compose_reply,
+    run_tools_for_intent,
+)
 
 __all__ = [
     "AgentDecision",
@@ -13,8 +19,12 @@ __all__ = [
     "ExtractedEntities",
     "Intent",
     "LLMNotConfiguredError",
+    "ToolContext",
+    "ToolResult",
     "apply_clarification_guard",
     "build_agent_graph",
+    "compose_reply",
     "get_chat_model",
     "invoke_agent",
+    "run_tools_for_intent",
 ]

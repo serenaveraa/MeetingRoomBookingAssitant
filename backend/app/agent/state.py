@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, NotRequired, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from langgraph.graph.message import add_messages
 
@@ -13,3 +13,5 @@ class AgentState(TypedDict):
     associate_name: str
     odc_timezone: str
     decision: NotRequired[AgentDecision | None]
+    tool_results: NotRequired[list[dict[str, Any]]]
+    final_message: NotRequired[str]

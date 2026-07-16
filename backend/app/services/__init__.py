@@ -16,6 +16,7 @@ from app.services.booking import (
     find_next_booking,
     get_odc_room,
     list_bookings,
+    list_my_bookings,
     resolve_my_meeting,
     update_booking_window,
 )
@@ -26,6 +27,7 @@ from app.services.errors import (
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
 )
+from app.services.utilization import UtilizationSummary, get_utilization_summary
 
 __all__ = [
     "AvailabilityResult",
@@ -35,6 +37,7 @@ __all__ = [
     "InvalidBookingWindowError",
     "MyMeetingNotFoundError",
     "TimeWindow",
+    "UtilizationSummary",
     "cancel_booking",
     "cancel_my_meeting",
     "check_availability",
@@ -47,7 +50,9 @@ __all__ = [
     "get_associate_by_email",
     "get_odc_room",
     "get_or_create_associate",
+    "get_utilization_summary",
     "list_bookings",
+    "list_my_bookings",
     "resolve_my_meeting",
     "suggest_alternatives",
     "update_booking_window",

@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     reminder_lead_minutes: int = 15
 
     openai_api_key: str = ""
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
     azure_openai_api_key: str = ""
     azure_openai_endpoint: str = ""
     azure_openai_deployment: str = ""

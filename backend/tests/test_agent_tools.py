@@ -1,0 +1,419 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.agent.entities import EntityResolutionError, resolve_booking_window
+from app.agent.graph import apply_clarification_guard, invoke_agent
+from app.agent.schema import AgentDecision, ExtractedEntities, Intent
+from app.agent.tools import (
+    CreateBookingArgs,
+    ExtendBookingArgs,
+    ListMyBookingsArgs,
+    SuggestAlternativesArgs,
+    ToolContext,
+    UtilizationArgs,
+    WindowArgs,
+    compose_reply,
+    run_tools_for_intent,
+    tool_cancel_booking,
+    tool_check_availability,
+    tool_create_booking,
+    tool_extend_booking,
+    tool_get_utilization_summary,
+    tool_list_my_bookings,
+    tool_suggest_alternatives,
+)
+from app.services.availability import AvailabilityResult, TimeWindow
+from app.services.errors import BookingConflictError, MyMeetingNotFoundError
+from app.services.utilization import UtilizationSummary
+
+
+def _decision(**kwargs) -> AgentDecision:
+    base = dict(
+        intent=Intent.book,
+        entities=ExtractedEntities(),
+        needs_clarification=False,
+        clarification_question=None,
+        assistant_message="OK",
+    )
+    base.update(kwargs)
+    return AgentDecision(**base)
+
+
+def _ctx() -> ToolContext:
+    return ToolContext(
+        session=MagicMock(),
+        associate_email="ada@example.com",
+        associate_name="Ada",
+    )
+
+
+def _booking_mock(**kwargs):
+    booking = MagicMock()
+    booking.id = kwargs.get("id", 1)
+    booking.associate_id = kwargs.get("associate_id", 10)
+    booking.purpose = kwargs.get("purpose", "Standup")
+    booking.start_at = kwargs.get(
+        "start_at", datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc)
+    )
+    booking.end_at = kwargs.get(
+        "end_at", datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc)
+    )
+    booking.status = kwargs.get("status", MagicMock(value="confirmed"))
+    return booking
+
+
+def test_resolve_booking_window_with_end_time():
+    start, end = resolve_booking_window(
+        ExtractedEntities(
+            date="2026-07-16",
+            start_time="14:00",
+            end_time="15:00",
+        ),
+        today=date(2026, 7, 16),
+    )
+    assert start < end
+    assert start.tzinfo is not None
+
+
+def test_resolve_booking_window_duration_and_relative_day():
+    start, end = resolve_booking_window(
+        ExtractedEntities(
+            date="tomorrow",
+            start_time="2 PM",
+            duration_minutes=30,
+        ),
+        today=date(2026, 7, 16),
+    )
+    assert (end - start).total_seconds() == 30 * 60
+
+
+def test_resolve_booking_window_requires_start():
+    with pytest.raises(EntityResolutionError):
+        resolve_booking_window(
+            ExtractedEntities(date="2026-07-16", duration_minutes=30)
+        )
+
+
+def test_clarification_guard_extend_needs_duration():
+    guarded = apply_clarification_guard(
+        _decision(intent=Intent.extend, entities=ExtractedEntities())
+    )
+    assert guarded.needs_clarification is True
+    assert "minute" in (guarded.clarification_question or "").lower()
+
+
+def test_clarification_guard_extend_with_duration_ok():
+    guarded = apply_clarification_guard(
+        _decision(
+            intent=Intent.extend,
+            entities=ExtractedEntities(duration_minutes=15),
+        )
+    )
+    assert guarded.needs_clarification is False
+
+
+def test_tool_check_availability_delegates():
+    ctx = _ctx()
+    args = WindowArgs(
+        start_at=datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+    )
+    fake = AvailabilityResult(
+        available=True,
+        requested=TimeWindow(start_at=args.start_at, end_at=args.end_at),
+        conflict=None,
+    )
+    with patch("app.agent.tools.svc_check_availability", return_value=fake) as mock_svc:
+        result = tool_check_availability(ctx, args)
+    mock_svc.assert_called_once_with(ctx.session, args.start_at, args.end_at)
+    assert result.ok is True
+    assert result.data["available"] is True
+
+
+def test_tool_create_booking_delegates():
+    ctx = _ctx()
+    args = CreateBookingArgs(
+        start_at=datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+        purpose="Standup",
+    )
+    associate = MagicMock(id=10)
+    booking = _booking_mock()
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch("app.agent.tools.svc_create_booking", return_value=booking) as mock_create,
+    ):
+        result = tool_create_booking(ctx, args)
+    mock_create.assert_called_once()
+    assert result.ok is True
+    assert result.data["id"] == 1
+
+
+def test_tool_suggest_alternatives_delegates():
+    ctx = _ctx()
+    args = SuggestAlternativesArgs(
+        start_at=datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+    )
+    windows = [
+        TimeWindow(
+            start_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 7, 16, 19, 0, tzinfo=timezone.utc),
+        )
+    ]
+    with patch(
+        "app.agent.tools.svc_suggest_alternatives", return_value=windows
+    ) as mock_alts:
+        result = tool_suggest_alternatives(ctx, args)
+    mock_alts.assert_called_once()
+    assert result.ok is True
+    assert len(result.data["alternatives"]) == 1
+
+
+def test_tool_extend_booking_delegates():
+    ctx = _ctx()
+    associate = MagicMock(id=10)
+    booking = _booking_mock()
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch("app.agent.tools.extend_my_meeting", return_value=booking) as mock_ext,
+    ):
+        result = tool_extend_booking(ctx, ExtendBookingArgs(minutes=15))
+    mock_ext.assert_called_once_with(ctx.session, 10, minutes=15)
+    assert result.ok is True
+    assert result.data["extended_by_minutes"] == 15
+
+
+def test_tool_cancel_booking_delegates():
+    ctx = _ctx()
+    associate = MagicMock(id=10)
+    booking = _booking_mock()
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch("app.agent.tools.cancel_my_meeting", return_value=booking) as mock_cancel,
+    ):
+        result = tool_cancel_booking(ctx)
+    mock_cancel.assert_called_once_with(ctx.session, 10)
+    assert result.ok is True
+
+
+def test_tool_list_my_bookings_delegates():
+    ctx = _ctx()
+    args = ListMyBookingsArgs(
+        start_at=datetime(2026, 7, 16, 11, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 7, 17, 3, 0, tzinfo=timezone.utc),
+    )
+    associate = MagicMock(id=10)
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch(
+            "app.agent.tools.svc_list_my_bookings", return_value=[_booking_mock()]
+        ) as mock_list,
+    ):
+        result = tool_list_my_bookings(ctx, args)
+    mock_list.assert_called_once()
+    assert result.ok is True
+    assert len(result.data["bookings"]) == 1
+
+
+def test_tool_get_utilization_summary_delegates():
+    ctx = _ctx()
+    summary = UtilizationSummary(
+        day=date(2026, 7, 16),
+        booking_count=2,
+        total_booked_minutes=90,
+        avg_duration_minutes=45.0,
+        idle_gap_count=3,
+        business_minutes=600,
+    )
+    with patch(
+        "app.agent.tools.svc_get_utilization_summary", return_value=summary
+    ) as mock_util:
+        result = tool_get_utilization_summary(
+            ctx, UtilizationArgs(day=date(2026, 7, 16))
+        )
+    mock_util.assert_called_once()
+    assert result.ok is True
+    assert result.data["booking_count"] == 2
+
+
+def test_run_tools_book_conflict_triggers_alternatives():
+    ctx = _ctx()
+    decision = _decision(
+        entities=ExtractedEntities(
+            date="2026-07-16",
+            start_time="14:00",
+            end_time="15:00",
+        )
+    )
+    conflict = BookingConflictError(
+        start_at=datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+        conflicting_booking_id=9,
+        conflicting_start_at=datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc),
+        conflicting_end_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+        conflicting_associate_id=2,
+        conflicting_associate_name="Bob",
+    )
+    associate = MagicMock(id=10)
+    alts = [
+        TimeWindow(
+            start_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 7, 16, 19, 0, tzinfo=timezone.utc),
+        )
+    ]
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch(
+            "app.agent.tools.svc_create_booking",
+            side_effect=conflict,
+        ),
+        patch("app.agent.tools.svc_suggest_alternatives", return_value=alts) as mock_alts,
+    ):
+        results = run_tools_for_intent(decision, ctx)
+
+    assert [r.tool for r in results] == ["create_booking", "suggest_alternatives"]
+    assert results[0].ok is False
+    assert results[0].error_type == "BookingConflictError"
+    assert results[1].ok is True
+    mock_alts.assert_called_once()
+    reply = compose_reply(decision, results)
+    assert "isn't available" in reply.lower() or "not available" in reply.lower()
+    assert "alternative" in reply.lower()
+
+
+def test_run_tools_skips_when_clarification_needed():
+    decision = _decision(
+        needs_clarification=True,
+        entities=ExtractedEntities(date="tomorrow", duration_minutes=30),
+    )
+    assert run_tools_for_intent(decision, _ctx()) == []
+
+
+def test_invoke_agent_book_success_runs_create(monkeypatch):
+    booked = _decision(
+        entities=ExtractedEntities(
+            date="2026-07-16",
+            start_time="14:00",
+            end_time="15:00",
+        ),
+        assistant_message="Understood.",
+    )
+    mock_model = MagicMock()
+    structured = MagicMock()
+    structured.invoke.return_value = booked
+    mock_model.with_structured_output.return_value = structured
+
+    associate = MagicMock(id=10)
+    booking = _booking_mock()
+    session = MagicMock()
+
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch("app.agent.tools.svc_create_booking", return_value=booking) as mock_create,
+    ):
+        turn = invoke_agent(
+            "Book 2-3 PM",
+            associate_email="ada@example.com",
+            associate_name="Ada",
+            session=session,
+            model=mock_model,
+        )
+
+    mock_create.assert_called_once()
+    assert turn.tool_results
+    assert turn.tool_results[0]["tool"] == "create_booking"
+    assert turn.tool_results[0]["ok"] is True
+    assert "Booked" in turn.final_message
+
+
+def test_invoke_agent_clarify_skips_tools():
+    incomplete = _decision(
+        entities=ExtractedEntities(date="tomorrow", duration_minutes=30),
+        needs_clarification=False,
+        assistant_message="Booking tomorrow.",
+    )
+    mock_model = MagicMock()
+    structured = MagicMock()
+    structured.invoke.return_value = incomplete
+    mock_model.with_structured_output.return_value = structured
+
+    with patch("app.agent.tools.tool_create_booking") as mock_create:
+        turn = invoke_agent(
+            "Book tomorrow 30 minutes",
+            associate_email="ada@example.com",
+            associate_name="Ada",
+            session=MagicMock(),
+            model=mock_model,
+        )
+
+    mock_create.assert_not_called()
+    assert turn.decision.needs_clarification is True
+    assert turn.tool_results == []
+
+
+def test_invoke_agent_extend_and_cancel(monkeypatch):
+    mock_model = MagicMock()
+    structured = MagicMock()
+    mock_model.with_structured_output.return_value = structured
+    associate = MagicMock(id=10)
+    booking = _booking_mock()
+    session = MagicMock()
+
+    structured.invoke.return_value = _decision(
+        intent=Intent.extend,
+        entities=ExtractedEntities(duration_minutes=15),
+        assistant_message="Extending.",
+    )
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch("app.agent.tools.extend_my_meeting", return_value=booking) as mock_ext,
+    ):
+        turn = invoke_agent(
+            "Extend by 15 minutes",
+            associate_email="ada@example.com",
+            associate_name="Ada",
+            session=session,
+            model=mock_model,
+        )
+    mock_ext.assert_called_once()
+    assert turn.tool_results[0]["tool"] == "extend_booking"
+    assert "Extended" in turn.final_message
+
+    structured.invoke.return_value = _decision(
+        intent=Intent.cancel,
+        assistant_message="Cancelling.",
+    )
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch("app.agent.tools.cancel_my_meeting", return_value=booking) as mock_cancel,
+    ):
+        turn = invoke_agent(
+            "Cancel my meeting",
+            associate_email="ada@example.com",
+            associate_name="Ada",
+            session=session,
+            model=mock_model,
+        )
+    mock_cancel.assert_called_once()
+    assert turn.tool_results[0]["tool"] == "cancel_booking"
+    assert "Cancelled" in turn.final_message
+
+
+def test_tool_extend_not_found():
+    ctx = _ctx()
+    associate = MagicMock(id=10)
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch(
+            "app.agent.tools.extend_my_meeting",
+            side_effect=MyMeetingNotFoundError(10),
+        ),
+    ):
+        result = tool_extend_booking(ctx, ExtendBookingArgs(minutes=15))
+    assert result.ok is False
+    assert result.error_type == "MyMeetingNotFoundError"

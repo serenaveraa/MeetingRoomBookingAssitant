@@ -43,7 +43,7 @@ def test_clarification_guard_allows_book_with_start():
     assert guarded.needs_clarification is False
 
 
-def test_invoke_agent_clear_book_request_no_db(monkeypatch):
+def test_invoke_agent_clear_book_request_no_session_skips_tools(monkeypatch):
     booked = _decision(
         entities=ExtractedEntities(
             date="2026-07-16",
@@ -58,7 +58,6 @@ def test_invoke_agent_clear_book_request_no_db(monkeypatch):
     structured.invoke.return_value = booked
     mock_model.with_structured_output.return_value = structured
 
-    # Fail loudly if booking services are touched.
     import app.services.booking as booking_mod
 
     monkeypatch.setattr(
@@ -76,6 +75,7 @@ def test_invoke_agent_clear_book_request_no_db(monkeypatch):
     assert turn.decision.intent == Intent.book
     assert turn.decision.needs_clarification is False
     assert turn.decision.entities.start_time == "14:00"
+    assert turn.tool_results == []
     booking_mod.create_booking.assert_not_called()
 
 
