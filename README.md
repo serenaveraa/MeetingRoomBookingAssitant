@@ -73,3 +73,5 @@ py -3 -m streamlit run app.py
 ## Configuration
 
 See [`.env.example`](.env.example) for all variables. Architecture: [`architecture.md`](architecture.md).
+
+CI runs backend tests on pushes/PRs to `develop` and `main` (Postgres service + `pytest`).
