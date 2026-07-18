@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     brevo_template_waitlist_available: str = ""
 
     teams_webhook_url: str = ""
+    teams_notifications_enabled: bool = False
     teams_graph_tenant_id: str = ""
     teams_graph_client_id: str = ""
     teams_graph_client_secret: str = ""

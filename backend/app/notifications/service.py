@@ -1,105 +1,116 @@
-"""Notification delivery used by background jobs.
-
-The service keeps channel choice in one place: email is preferred when Brevo
-is configured for the associate; otherwise the configured Teams webhook is
-used.  Selecting one channel avoids retrying a successful first delivery when
-another provider fails.
-"""
+"""Channel-agnostic notification fan-out service."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-import httpx
-
 from app.config import Settings, get_settings
-from app.models import Booking
+from app.models import Associate, Booking
+from app.notifications.channels import (
+    BrevoChannel,
+    ChannelResult,
+    NotificationChannel,
+    TeamsWebhookChannel,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class NotificationService:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        channels: Sequence[NotificationChannel] | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
+        self.channels = list(channels) if channels is not None else self._enabled_channels()
 
+    def _enabled_channels(self) -> list[NotificationChannel]:
+        channels: list[NotificationChannel] = []
+        if BrevoChannel.is_enabled(self.settings):
+            channels.append(BrevoChannel(self.settings))
+        if TeamsWebhookChannel.is_enabled(self.settings):
+            channels.append(TeamsWebhookChannel(self.settings))
+        return channels
+
+    def notify(
+        self,
+        event: str,
+        associate: Associate,
+        payload: Mapping[str, object],
+    ) -> list[ChannelResult]:
+        """Fan an event out to every enabled channel independently."""
+        results: list[ChannelResult] = []
+        for channel in self.channels:
+            try:
+                channel.send(event, associate, payload)
+            except Exception as exc:
+                logger.exception(
+                    "Notification channel failed event=%s channel=%s recipient=%s",
+                    event,
+                    channel.name,
+                    associate.email,
+                )
+                results.append(ChannelResult(channel.name, success=False, error=str(exc)))
+            else:
+                results.append(ChannelResult(channel.name, success=True))
+        return results
+
+    # Compatibility helpers for existing callers. New callers should use
+    # notify(event, associate, payload) directly.
     def send_vacate_reminder(self, booking: Booking) -> list[str]:
-        """Deliver the vacate notice and return the channels used.
-
-        A deployment without a configured channel is intentionally treated as
-        a delivery failure.  Marking such a reminder as sent would silently
-        lose the operational notification.
-        """
-        message = (
-            f"Your meeting will end in {self.settings.reminder_lead_minutes} minutes. Another meeting is "
-            "scheduled immediately after yours. Kindly vacate the room."
+        return self._successful_channels(
+            self.notify(
+                "booking.vacate_reminder",
+                self._associate(booking),
+                self._booking_payload(booking, lead_minutes=self.settings.reminder_lead_minutes),
+            ),
+            require_delivery=True,
         )
-        return self._send(booking, "Please vacate the meeting room soon", message)
 
     def send_booking_confirmation(self, booking: Booking) -> list[str]:
-        return self._send(
-            booking,
-            "Meeting room booking confirmed",
-            f"Your booking for {booking.room.name} from {booking.start_at} to "
-            f"{booking.end_at} has been confirmed.",
+        return self._successful_channels(
+            self.notify("booking.confirmed", self._associate(booking), self._booking_payload(booking)),
+            require_delivery=True,
         )
 
-    def send_booking_extended(
-        self, booking: Booking, *, previous_end_at: datetime
-    ) -> list[str]:
-        return self._send(
-            booking,
-            "Meeting room booking extended",
-            f"Your booking for {booking.room.name} has been extended from "
-            f"{previous_end_at} to {booking.end_at}.",
+    def send_booking_extended(self, booking: Booking, *, previous_end_at: datetime) -> list[str]:
+        return self._successful_channels(
+            self.notify("booking.extended", self._associate(booking), self._booking_payload(booking, previous_end_at=previous_end_at)),
+            require_delivery=True,
         )
 
     def send_booking_cancelled(self, booking: Booking) -> list[str]:
-        return self._send(
-            booking,
-            "Meeting room booking cancelled",
-            f"Your booking for {booking.room.name} from {booking.start_at} to "
-            f"{booking.end_at} has been cancelled.",
+        return self._successful_channels(
+            self.notify("booking.cancelled", self._associate(booking), self._booking_payload(booking)),
+            require_delivery=True,
         )
 
-    def _send(self, booking: Booking, subject: str, message: str) -> list[str]:
-        """Deliver through the configured channel-selection policy."""
-        channels: list[str] = []
-        if self.settings.brevo_api_key and self.settings.brevo_sender_email:
-            self._send_brevo(booking, subject, message)
-            channels.append("brevo")
-        elif self.settings.teams_webhook_url:
-            self._send_teams(booking, message)
-            channels.append("teams")
-        if not channels:
-            raise RuntimeError("No notification channel is configured")
-        return channels
-
-    def _send_brevo(self, booking: Booking, subject: str, message: str) -> None:
-        recipient = booking.associate
-        if recipient is None:
+    @staticmethod
+    def _associate(booking: Booking) -> Associate:
+        if booking.associate is None:
             raise RuntimeError(f"Booking {booking.id} has no notification recipient")
-        payload = {
-            "sender": {
-                "email": self.settings.brevo_sender_email,
-                "name": self.settings.brevo_sender_name,
-            },
-            "to": [{"email": recipient.email, "name": recipient.name}],
-            "subject": subject,
-            "textContent": message,
-        }
-        response = httpx.post(
-            "https://api.brevo.com/v3/smtp/email",
-            headers={"api-key": self.settings.brevo_api_key},
-            json=payload,
-            timeout=10.0,
-        )
-        response.raise_for_status()
+        return booking.associate
 
-    def _send_teams(self, booking: Booking, message: str) -> None:
-        response = httpx.post(
-            self.settings.teams_webhook_url,
-            json={"text": message},
-            timeout=10.0,
-        )
-        response.raise_for_status()
+    @staticmethod
+    def _booking_payload(booking: Booking, **extra: object) -> dict[str, object]:
+        return {
+            "booking_id": booking.id,
+            "room_name": booking.room.name,
+            "start_at": booking.start_at,
+            "end_at": booking.end_at,
+            "purpose": booking.purpose,
+            **extra,
+        }
+
+    @staticmethod
+    def _successful_channels(
+        results: Sequence[ChannelResult], *, require_delivery: bool = False
+    ) -> list[str]:
+        successful = [result.channel for result in results if result.success]
+        if require_delivery and not successful:
+            raise RuntimeError("No notification channel delivered the reminder")
+        return successful
