@@ -76,6 +76,11 @@ class Booking(Base):
     reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Delivery ownership marker used by the reminder worker. It is kept
+    # separate from reminder_sent_at so known failed delivery can be retried.
+    reminder_claimed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
