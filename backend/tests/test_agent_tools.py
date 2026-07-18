@@ -223,12 +223,24 @@ def test_tool_list_my_bookings_delegates():
 def test_tool_get_utilization_summary_delegates():
     ctx = _ctx()
     summary = UtilizationSummary(
-        day=date(2026, 7, 16),
+        start_date=date(2026, 7, 16),
+        end_date=date(2026, 7, 16),
         booking_count=2,
         total_booked_minutes=90,
         avg_duration_minutes=45.0,
         idle_gap_count=3,
         business_minutes=600,
+        bookings_per_day=[
+            {
+                "day": "2026-07-16",
+                "booking_count": 2,
+                "total_booked_minutes": 90,
+                "avg_duration_minutes": 45.0,
+                "idle_gap_count": 3,
+                "business_minutes": 600,
+            }
+        ],
+        day=date(2026, 7, 16),
     )
     with patch(
         "app.agent.tools.svc_get_utilization_summary", return_value=summary

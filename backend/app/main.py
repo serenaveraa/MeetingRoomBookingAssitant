@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.agent import router as agent_router
-from app.api.bookings import router as bookings_router
+from app.api.bookings import insights_router, router as bookings_router
 from app.config import get_settings
 from app.db import init_db
 from app.scheduler import create_scheduler
@@ -26,6 +26,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(bookings_router)
+app.include_router(insights_router)
 app.include_router(agent_router)
 
 
