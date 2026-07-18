@@ -6,12 +6,18 @@ from app.api.agent import router as agent_router
 from app.api.bookings import router as bookings_router
 from app.config import get_settings
 from app.db import init_db
+from app.scheduler import create_scheduler
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
-    yield
+    scheduler = create_scheduler(get_settings())
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://odc:odc@localhost:5432/meeting_room"
     odc_timezone: str = "America/Sao_Paulo"
     reminder_lead_minutes: int = 15
+    reminder_poll_interval_seconds: int = 60
+    reminder_back_to_back_tolerance_minutes: int = 2
 
     openai_api_key: str = ""
     groq_api_key: str = ""
