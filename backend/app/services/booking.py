@@ -17,6 +17,7 @@ from app.services.errors import (
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
 )
+from app.services.notification_dispatch import dispatch_booking_notification
 from app.services.timeutil import as_utc, ensure_utc
 
 
@@ -136,10 +137,11 @@ def create_booking(
         session.add(booking)
         session.commit()
         session.refresh(booking)
-        return booking
     except Exception:
         session.rollback()
         raise
+    dispatch_booking_notification("booking.confirmed", booking)
+    return booking
 
 
 def update_booking_window(
@@ -173,10 +175,10 @@ def update_booking_window(
         booking.end_at = end_utc
         session.commit()
         session.refresh(booking)
-        return booking
     except Exception:
         session.rollback()
         raise
+    return booking
 
 
 def cancel_booking(session: Session, booking_id: int) -> Booking:
@@ -189,10 +191,11 @@ def cancel_booking(session: Session, booking_id: int) -> Booking:
         booking.status = BookingStatus.cancelled
         session.commit()
         session.refresh(booking)
-        return booking
     except Exception:
         session.rollback()
         raise
+    dispatch_booking_notification("booking.cancelled", booking)
+    return booking
 
 
 def extend_booking(
@@ -211,13 +214,18 @@ def extend_booking(
     if booking.status != BookingStatus.confirmed:
         raise BookingNotFoundError(booking_id)
 
-    new_end = as_utc(booking.end_at) + timedelta(minutes=minutes)
-    return update_booking_window(
+    previous_end_at = as_utc(booking.end_at)
+    new_end = previous_end_at + timedelta(minutes=minutes)
+    updated = update_booking_window(
         session,
         booking_id,
         start_at=as_utc(booking.start_at),
         end_at=new_end,
     )
+    dispatch_booking_notification(
+        "booking.extended", updated, previous_end_at=previous_end_at
+    )
+    return updated
 
 
 def list_bookings(
