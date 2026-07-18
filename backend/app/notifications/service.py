@@ -9,6 +9,7 @@ another provider fails.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 import httpx
 
@@ -29,22 +30,52 @@ class NotificationService:
         a delivery failure.  Marking such a reminder as sent would silently
         lose the operational notification.
         """
-        channels: list[str] = []
         message = (
             f"Your meeting will end in {self.settings.reminder_lead_minutes} minutes. Another meeting is "
             "scheduled immediately after yours. Kindly vacate the room."
         )
+        return self._send(booking, "Please vacate the meeting room soon", message)
+
+    def send_booking_confirmation(self, booking: Booking) -> list[str]:
+        return self._send(
+            booking,
+            "Meeting room booking confirmed",
+            f"Your booking for {booking.room.name} from {booking.start_at} to "
+            f"{booking.end_at} has been confirmed.",
+        )
+
+    def send_booking_extended(
+        self, booking: Booking, *, previous_end_at: datetime
+    ) -> list[str]:
+        return self._send(
+            booking,
+            "Meeting room booking extended",
+            f"Your booking for {booking.room.name} has been extended from "
+            f"{previous_end_at} to {booking.end_at}.",
+        )
+
+    def send_booking_cancelled(self, booking: Booking) -> list[str]:
+        return self._send(
+            booking,
+            "Meeting room booking cancelled",
+            f"Your booking for {booking.room.name} from {booking.start_at} to "
+            f"{booking.end_at} has been cancelled.",
+        )
+
+    def _send(self, booking: Booking, subject: str, message: str) -> list[str]:
+        """Deliver through the configured channel-selection policy."""
+        channels: list[str] = []
         if self.settings.brevo_api_key and self.settings.brevo_sender_email:
-            self._send_brevo(booking, message)
+            self._send_brevo(booking, subject, message)
             channels.append("brevo")
         elif self.settings.teams_webhook_url:
             self._send_teams(booking, message)
             channels.append("teams")
         if not channels:
-            raise RuntimeError("No notification channel is configured for vacate reminders")
+            raise RuntimeError("No notification channel is configured")
         return channels
 
-    def _send_brevo(self, booking: Booking, message: str) -> None:
+    def _send_brevo(self, booking: Booking, subject: str, message: str) -> None:
         recipient = booking.associate
         if recipient is None:
             raise RuntimeError(f"Booking {booking.id} has no notification recipient")
@@ -54,7 +85,7 @@ class NotificationService:
                 "name": self.settings.brevo_sender_name,
             },
             "to": [{"email": recipient.email, "name": recipient.name}],
-            "subject": "Please vacate the meeting room soon",
+            "subject": subject,
             "textContent": message,
         }
         response = httpx.post(
