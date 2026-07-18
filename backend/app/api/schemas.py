@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field
@@ -63,6 +63,28 @@ class ChatIn(BaseModel):
         max_length=120,
         description="Optional client conversation id; echoed in the response",
     )
+
+
+class UtilizationDayOut(BaseModel):
+    day: str
+    booking_count: int
+    total_booked_minutes: int
+    avg_duration_minutes: float
+    idle_gap_count: int
+    business_minutes: int
+
+
+class UtilizationOut(BaseModel):
+    start_date: date
+    end_date: date
+    booking_count: int
+    total_booked_minutes: int
+    avg_duration_minutes: float
+    idle_gap_count: int
+    business_minutes: int
+    bookings_per_day: list[UtilizationDayOut] = Field(default_factory=list)
+    busiest_day: dict[str, Any] | None = None
+    summary: str | None = None
 
 
 class ChatOut(BaseModel):

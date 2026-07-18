@@ -173,6 +173,50 @@ def test_cancel_success_and_forbidden(client: TestClient):
     assert cancelled.json()["status"] == "cancelled"
 
 
+def test_utilization_endpoint_returns_metrics(client: TestClient):
+    client.post(
+        "/bookings",
+        json={
+            "associate_email": "ada@example.com",
+            "associate_name": "Ada",
+            "start_at": datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc).isoformat(),
+            "end_at": datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc).isoformat(),
+            "purpose": "Standup",
+        },
+    )
+
+    response = client.get(
+        "/insights/utilization",
+        params={"start_date": "2026-07-15", "end_date": "2026-07-17"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["booking_count"] == 1
+    assert payload["avg_duration_minutes"] == 60.0
+    assert payload["summary"] is not None
+
+
+def test_utilization_endpoint_rejects_reversed_range(client: TestClient):
+    response = client.get(
+        "/insights/utilization",
+        params={"start_date": "2026-07-17", "end_date": "2026-07-15"},
+    )
+    assert response.status_code == 400
+    assert "end_date" in response.json()["detail"].lower()
+
+
+def test_utilization_endpoint_handles_empty_range(client: TestClient):
+    response = client.get(
+        "/insights/utilization",
+        params={"start_date": "2030-01-01", "end_date": "2030-01-03"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["booking_count"] == 0
+    assert payload["bookings_per_day"]
+    assert all(item["booking_count"] == 0 for item in payload["bookings_per_day"])
+
+
 def test_openapi_includes_booking_paths(client: TestClient):
     spec = client.get("/openapi.json").json()
     paths = spec["paths"]

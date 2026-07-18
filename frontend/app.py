@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import streamlit as st
 
-from api_client import ApiError, get_api_base_url, get_health, list_bookings, post_chat
+from api_client import (
+    ApiError,
+    get_api_base_url,
+    get_health,
+    get_utilization,
+    list_bookings,
+    post_chat,
+)
 from chat_ui import format_tool_outcomes
 from timeline import (
     ODC_TIMEZONE,
@@ -90,7 +97,7 @@ except ApiError as exc:
     st.error(str(exc))
     st.stop()
 
-calendar_tab, chat_tab = st.tabs(["Calendar", "Chat"])
+calendar_tab, insights_tab, chat_tab = st.tabs(["Calendar", "Insights", "Chat"])
 
 with calendar_tab:
     st.caption(
@@ -125,6 +132,35 @@ with calendar_tab:
             st.write("No confirmed bookings in business hours for this day.")
         else:
             st.dataframe(table, use_container_width=True, hide_index=True)
+
+with insights_tab:
+    st.caption("Utilization metrics over a date range using the shared backend service.")
+    col_left, col_right = st.columns(2)
+    with col_left:
+        start_date = st.date_input("Start date", value=_today_odc() - timedelta(days=6))
+    with col_right:
+        end_date = st.date_input("End date", value=_today_odc())
+
+    if start_date > end_date:
+        st.error("End date must be on or after start date.")
+    else:
+        try:
+            metrics = get_utilization(start_date, end_date)
+        except ApiError as exc:
+            st.error(str(exc))
+        else:
+            st.metric("Bookings", metrics.get("booking_count", 0))
+            st.metric("Average duration", f"{metrics.get('avg_duration_minutes', 0):.1f} min")
+            st.metric("Idle gaps", metrics.get("idle_gap_count", 0))
+            if metrics.get("summary"):
+                st.write(metrics["summary"])
+            if metrics.get("bookings_per_day"):
+                st.subheader("Per-day breakdown")
+                import pandas as pd
+
+                chart_data = pd.DataFrame(metrics["bookings_per_day"])
+                chart_data["day"] = pd.to_datetime(chart_data["day"])
+                st.bar_chart(chart_data.set_index("day")["booking_count"])
 
 with chat_tab:
     st.caption(

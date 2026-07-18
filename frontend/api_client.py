@@ -58,6 +58,31 @@ def list_bookings(
         raise ApiError(f"Failed to load bookings from {url}: {exc}") from exc
 
 
+def get_utilization(
+    start_date: datetime,
+    end_date: datetime,
+    *,
+    base_url: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    url = f"{base_url or get_api_base_url()}/insights/utilization"
+    params: dict[str, str] = {
+        "start_date": start_date.date().isoformat(),
+        "end_date": end_date.date().isoformat(),
+    }
+    try:
+        response = httpx.get(url, params=params, timeout=timeout)
+        if response.status_code >= 400:
+            detail = _error_detail(response)
+            raise ApiError(f"Utilization failed ({response.status_code}): {detail}")
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ApiError("Unexpected /insights/utilization response shape")
+        return data
+    except httpx.HTTPError as exc:
+        raise ApiError(f"Failed to load utilization from {url}: {exc}") from exc
+
+
 def post_chat(
     message: str,
     *,

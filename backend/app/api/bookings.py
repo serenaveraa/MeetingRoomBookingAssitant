@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -12,6 +12,8 @@ from app.api.schemas import (
     CreateBookingIn,
     ExtendBookingIn,
     TimeWindowOut,
+    UtilizationDayOut,
+    UtilizationOut,
 )
 from app.db import get_db
 from app.models import Booking, BookingStatus
@@ -29,8 +31,10 @@ from app.services.errors import (
     InvalidBookingWindowError,
 )
 from app.services.timeutil import ensure_utc
+from app.services.utilization import get_utilization_summary
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
+insights_router = APIRouter(prefix="/insights", tags=["insights"])
 
 
 def _booking_out(booking: Booking) -> BookingOut:
@@ -98,6 +102,43 @@ def get_bookings(
     for booking in bookings:
         _ = booking.associate
     return [_booking_out(b) for b in bookings]
+
+
+@insights_router.get("/utilization", response_model=UtilizationOut)
+def get_utilization(
+    start_date: date = Query(..., alias="start_date"),
+    end_date: date = Query(..., alias="end_date"),
+    db: Session = Depends(get_db),
+) -> UtilizationOut:
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+    try:
+        summary = get_utilization_summary(db, start_date=start_date, end_date=end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return UtilizationOut(
+        start_date=summary.start_date,
+        end_date=summary.end_date,
+        booking_count=summary.booking_count,
+        total_booked_minutes=summary.total_booked_minutes,
+        avg_duration_minutes=summary.avg_duration_minutes,
+        idle_gap_count=summary.idle_gap_count,
+        business_minutes=summary.business_minutes,
+        bookings_per_day=[
+            UtilizationDayOut(
+                day=entry["day"],
+                booking_count=int(entry["booking_count"]),
+                total_booked_minutes=int(entry["total_booked_minutes"]),
+                avg_duration_minutes=float(entry["avg_duration_minutes"]),
+                idle_gap_count=int(entry["idle_gap_count"]),
+                business_minutes=int(entry["business_minutes"]),
+            )
+            for entry in summary.bookings_per_day
+        ],
+        busiest_day=summary.busiest_day,
+        summary=summary.overall_summary,
+    )
 
 
 @router.get("/availability", response_model=AvailabilityOut)

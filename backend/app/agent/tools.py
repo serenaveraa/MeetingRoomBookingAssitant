@@ -57,7 +57,9 @@ class ListMyBookingsArgs(WindowArgs):
 
 
 class UtilizationArgs(BaseModel):
-    day: date
+    day: date | None = None
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 @dataclass
@@ -240,20 +242,29 @@ def tool_get_utilization_summary(
     ctx: ToolContext, args: UtilizationArgs
 ) -> ToolResult:
     try:
-        summary = svc_get_utilization_summary(ctx.session, day=args.day)
+        summary = svc_get_utilization_summary(
+            ctx.session,
+            day=args.day,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
         return ToolResult(
             tool="get_utilization_summary",
             ok=True,
             data={
-                "day": summary.day.isoformat(),
+                "start_date": summary.start_date.isoformat(),
+                "end_date": summary.end_date.isoformat(),
                 "booking_count": summary.booking_count,
                 "total_booked_minutes": summary.total_booked_minutes,
                 "avg_duration_minutes": summary.avg_duration_minutes,
                 "idle_gap_count": summary.idle_gap_count,
                 "business_minutes": summary.business_minutes,
+                "bookings_per_day": summary.bookings_per_day,
+                "busiest_day": summary.busiest_day,
+                "summary": summary.overall_summary,
             },
         )
-    except BookingServiceError as exc:
+    except (BookingServiceError, ValueError) as exc:
         return _fail("get_utilization_summary", exc)
 
 
@@ -406,10 +417,12 @@ def compose_reply(decision: AgentDecision, results: list[ToolResult]) -> str:
         if not primary.ok:
             return f"Couldn't load utilization: {primary.error}"
         d = primary.data
+        if d.get("summary"):
+            return d["summary"]
         return (
-            f"Utilization for {d['day']}: {d['booking_count']} booking(s), "
-            f"{d['total_booked_minutes']} booked minutes "
-            f"(avg {d['avg_duration_minutes']} min), "
+            f"Utilization for {d['start_date']} to {d['end_date']}: "
+            f"{d['booking_count']} booking(s), {d['total_booked_minutes']} booked minutes, "
+            f"average duration {d['avg_duration_minutes']} min, and "
             f"{d['idle_gap_count']} idle gap(s) within business hours."
         )
 
