@@ -29,7 +29,7 @@ class BookingOut(BaseModel):
 
 
 class ConflictOut(BaseModel):
-    booking_id: int
+    booking_id: int | None = None
     associate_id: int | None = None
     start_at: datetime
     end_at: datetime
