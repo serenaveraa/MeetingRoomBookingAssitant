@@ -27,7 +27,11 @@ from app.agent.tools import (
     tool_suggest_alternatives,
 )
 from app.services.availability import AvailabilityResult, TimeWindow
-from app.services.errors import BookingConflictError, MyMeetingNotFoundError
+from app.services.errors import (
+    BookingConflictError,
+    InvalidBookingWindowError,
+    MyMeetingNotFoundError,
+)
 from app.services.utilization import UtilizationSummary
 
 
@@ -429,3 +433,58 @@ def test_tool_extend_not_found():
         result = tool_extend_booking(ctx, ExtendBookingArgs(minutes=15))
     assert result.ok is False
     assert result.error_type == "MyMeetingNotFoundError"
+
+
+def test_tool_failure_paths_are_structured_without_external_calls():
+    ctx = _ctx()
+    window = WindowArgs(
+        start_at=datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 7, 16, 18, 0, tzinfo=timezone.utc),
+    )
+    associate = MagicMock(id=10)
+    conflict = BookingConflictError(
+        start_at=window.start_at,
+        end_at=window.end_at,
+        conflicting_booking_id=9,
+        conflicting_start_at=window.start_at,
+        conflicting_end_at=window.end_at,
+        conflicting_associate_id=2,
+    )
+    with (
+        patch(
+            "app.agent.tools.svc_check_availability",
+            side_effect=InvalidBookingWindowError(window.start_at, window.end_at),
+        ),
+        patch(
+            "app.agent.tools.get_or_create_associate", return_value=associate
+        ),
+        patch("app.agent.tools.svc_create_booking", side_effect=conflict),
+        patch(
+            "app.agent.tools.svc_suggest_alternatives",
+            side_effect=InvalidBookingWindowError(window.start_at, window.end_at),
+        ),
+        patch(
+            "app.agent.tools.cancel_my_meeting",
+            side_effect=MyMeetingNotFoundError(associate.id),
+        ),
+    ):
+        availability = tool_check_availability(ctx, window)
+        booking = tool_create_booking(
+            ctx,
+            CreateBookingArgs(
+                start_at=window.start_at,
+                end_at=window.end_at,
+            ),
+        )
+        alternatives = tool_suggest_alternatives(ctx, SuggestAlternativesArgs(**window.model_dump()))
+        cancelled = tool_cancel_booking(ctx)
+
+    assert availability.ok is False
+    assert availability.error_type == "InvalidBookingWindowError"
+    assert booking.ok is False
+    assert booking.error_type == "BookingConflictError"
+    assert booking.data["conflicting_booking_id"] == 9
+    assert alternatives.ok is False
+    assert alternatives.error_type == "InvalidBookingWindowError"
+    assert cancelled.ok is False
+    assert cancelled.error_type == "MyMeetingNotFoundError"

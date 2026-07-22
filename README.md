@@ -70,15 +70,21 @@ Natural-language agent: `POST /agent/chat` with JSON `{ "message", "associate_em
 
 ### Tests
 
-With Docker Postgres running:
+The CI-friendly command for the complete backend suite is:
 
 ```bash
 cd backend
-.venv/Scripts/python.exe -m pytest -q
+python -m pytest -q
 ```
 
-- Unit tests (`test_models.py`) use in-memory SQLite only for speed
-- Integration tests (`test_postgres_init.py`) require Docker Postgres and skip if it is down
+The test suite uses in-memory SQLite for fast unit/API tests. Postgres integration tests are marked `postgres` and use the Docker database configured by `DATABASE_URL`:
+
+```bash
+python -m pytest -q -m postgres       # Postgres-only integration checks
+python -m pytest -q -m "not postgres" # Fast SQLite-only checks
+```
+
+CI starts PostgreSQL 16 and sets `DATABASE_URL` before running the complete command. Locally, start Docker Postgres with `docker compose up -d db`; if it is unavailable, the marked integration tests skip while the SQLite suite still runs.
 
 ## 3. Frontend (Streamlit calendar)
 
