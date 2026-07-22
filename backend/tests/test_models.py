@@ -90,6 +90,7 @@ def test_booking_and_waitlist_happy_path():
         )
         wait = WaitlistEntry(
             associate_id=associate.id,
+            room_id=room.id,
             desired_start=end,
             desired_end=end + timedelta(hours=1),
         )

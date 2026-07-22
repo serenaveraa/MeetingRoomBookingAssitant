@@ -47,6 +47,26 @@ class ExtendBookingIn(BaseModel):
     minutes: int = Field(gt=0, description="Minutes to add to the booking end time")
 
 
+class CreateWaitlistIn(BaseModel):
+    associate_email: EmailStr
+    associate_name: str = Field(min_length=1, max_length=120)
+    room_id: int = Field(gt=0)
+    desired_start: datetime
+    desired_end: datetime
+
+
+class WaitlistOut(BaseModel):
+    id: int
+    associate_id: int
+    room_id: int
+    desired_start: datetime
+    desired_end: datetime
+    created_at: datetime
+    notified_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class AvailabilityOut(BaseModel):
     available: bool
     requested: TimeWindowOut

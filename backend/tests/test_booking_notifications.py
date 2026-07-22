@@ -5,7 +5,7 @@ import pytest
 
 from app.config import get_settings
 from app.db import get_session_factory, init_db, reset_engine
-from app.models import Associate, Booking
+from app.models import Associate, Booking, Room, WaitlistEntry
 from app.api.bookings import post_booking
 from app.api.schemas import CreateBookingIn
 from app.services import booking as booking_module
@@ -141,3 +141,77 @@ def test_create_endpoint_commits_when_notification_provider_fails(monkeypatch):
             db=session,
         )
         assert session.get(Booking, response.id) is not None
+
+
+def test_cancel_notifies_all_fully_contained_waitlist_entries_and_deduplicates(monkeypatch):
+    notifier = MagicMock()
+    notifier.send_booking_confirmation.return_value = ["brevo"]
+    notifier.send_booking_cancelled.return_value = ["brevo"]
+    notifier.send_waitlist_slot_available.return_value = ["brevo"]
+    monkeypatch.setattr(
+        booking_module,
+        "dispatch_booking_notification",
+        lambda event, booking, **kwargs: dispatch_booking_notification(
+            event, booking, notification_service=notifier, **kwargs
+        ),
+    )
+    with get_session_factory()() as session:
+        room = session.query(Room).one()
+        first = Associate(name="Grace", email="grace@example.com")
+        second = Associate(name="Lin", email="lin@example.com")
+        third = Associate(name="Nope", email="nope@example.com")
+        session.add_all([first, second, third])
+        session.flush()
+        booking = create_booking(
+            session, associate_id=_associate_id(), start_at=_at(10), end_at=_at(12), room_id=room.id
+        )
+        session.add_all([
+            WaitlistEntry(associate_id=first.id, room_id=room.id, desired_start=_at(10), desired_end=_at(12)),
+            WaitlistEntry(associate_id=second.id, room_id=room.id, desired_start=_at(10, 30), desired_end=_at(11, 30)),
+            WaitlistEntry(associate_id=third.id, room_id=room.id, desired_start=_at(9), desired_end=_at(11)),
+        ])
+        session.commit()
+        notifier.reset_mock()
+
+        cancel_booking(session, booking.id)
+        entries = session.query(WaitlistEntry).order_by(WaitlistEntry.id).all()
+        assert entries[0].notified_at is not None
+        assert entries[1].notified_at is not None
+        assert entries[2].notified_at is None
+        assert notifier.send_waitlist_slot_available.call_count == 2
+
+        notifier.reset_mock()
+        dispatch_booking_notification(
+            "booking.cancelled", booking, notification_service=notifier
+        )
+        notifier.send_waitlist_slot_available.assert_not_called()
+
+
+def test_waitlist_notification_failure_does_not_change_cancelled_booking(monkeypatch, caplog):
+    notifier = MagicMock()
+    notifier.send_booking_confirmation.return_value = ["brevo"]
+    notifier.send_booking_cancelled.return_value = ["brevo"]
+    notifier.send_waitlist_slot_available.side_effect = RuntimeError("Brevo down")
+    monkeypatch.setattr(
+        booking_module,
+        "dispatch_booking_notification",
+        lambda event, booking, **kwargs: dispatch_booking_notification(
+            event, booking, notification_service=notifier, **kwargs
+        ),
+    )
+    with get_session_factory()() as session:
+        associate_id = _associate_id()
+        booking = create_booking(session, associate_id=associate_id, start_at=_at(10), end_at=_at(11))
+        room = session.query(Room).one()
+        wait = WaitlistEntry(
+            associate_id=associate_id,
+            room_id=room.id,
+            desired_start=_at(10),
+            desired_end=_at(11),
+        )
+        session.add(wait)
+        session.commit()
+        cancel_booking(session, booking.id)
+        assert session.get(Booking, booking.id).status.value == "cancelled"
+        assert session.get(WaitlistEntry, wait.id).notified_at is None
+    assert "Waitlist notification failed" in caplog.text

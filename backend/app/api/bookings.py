@@ -10,10 +10,12 @@ from app.api.schemas import (
     BookingOut,
     ConflictOut,
     CreateBookingIn,
+    CreateWaitlistIn,
     ExtendBookingIn,
     TimeWindowOut,
     UtilizationDayOut,
     UtilizationOut,
+    WaitlistOut,
 )
 from app.db import get_db
 from app.models import Booking, BookingStatus
@@ -32,9 +34,11 @@ from app.services.errors import (
 )
 from app.services.timeutil import ensure_utc
 from app.services.utilization import get_utilization_summary
+from app.services.waitlist import create_waitlist_entry
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 insights_router = APIRouter(prefix="/insights", tags=["insights"])
+waitlist_router = APIRouter(prefix="/waitlist", tags=["waitlist"])
 
 
 def _booking_out(booking: Booking) -> BookingOut:
@@ -50,6 +54,30 @@ def _booking_out(booking: Booking) -> BookingOut:
         end_at=booking.end_at,
         status=booking.status,
     )
+
+
+def _waitlist_out(entry) -> WaitlistOut:
+    return WaitlistOut.model_validate(entry)
+
+
+@waitlist_router.post("", response_model=WaitlistOut, status_code=status.HTTP_201_CREATED)
+def post_waitlist_entry(body: CreateWaitlistIn, db: Session = Depends(get_db)) -> WaitlistOut:
+    associate = get_or_create_associate(
+        db, email=str(body.associate_email), name=body.associate_name
+    )
+    try:
+        entry = create_waitlist_entry(
+            db,
+            associate_id=associate.id,
+            room_id=body.room_id,
+            desired_start=ensure_utc(body.desired_start),
+            desired_end=ensure_utc(body.desired_end),
+        )
+    except InvalidBookingWindowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _waitlist_out(entry)
 
 
 def _require_owner(booking: Booking, associate_email: str) -> None:

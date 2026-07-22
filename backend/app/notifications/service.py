@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 from app.config import Settings, get_settings
-from app.models import Associate, Booking
+from app.models import Associate, Booking, WaitlistEntry
 from app.notifications.channels import (
     BrevoChannel,
     ChannelResult,
@@ -86,6 +86,21 @@ class NotificationService:
     def send_booking_cancelled(self, booking: Booking) -> list[str]:
         return self._successful_channels(
             self.notify("booking.cancelled", self._associate(booking), self._booking_payload(booking)),
+            require_delivery=True,
+        )
+
+    def send_waitlist_slot_available(self, entry: WaitlistEntry) -> list[str]:
+        return self._successful_channels(
+            self.notify(
+                "waitlist.slot_available",
+                entry.associate,
+                {
+                    "waitlist_entry_id": entry.id,
+                    "room_name": entry.room.name,
+                    "start_at": entry.desired_start,
+                    "end_at": entry.desired_end,
+                },
+            ),
             require_delivery=True,
         )
 

@@ -173,6 +173,57 @@ def test_cancel_success_and_forbidden(client: TestClient):
     assert cancelled.json()["status"] == "cancelled"
 
 
+def test_create_waitlist_entry(client: TestClient):
+    client.post(
+        "/bookings",
+        json={
+            "associate_email": "ada@example.com",
+            "associate_name": "Ada",
+            "start_at": _utc(10),
+            "end_at": _utc(11),
+        },
+    )
+    created = client.post(
+        "/waitlist",
+        json={
+            "associate_email": "grace@example.com",
+            "associate_name": "Grace",
+            "room_id": 1,
+            "desired_start": _utc(10),
+            "desired_end": _utc(11),
+        },
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["id"] > 0
+    assert body["room_id"] == 1
+    assert body["notified_at"] is None
+
+    free = client.post(
+        "/waitlist",
+        json={
+            "associate_email": "grace@example.com",
+            "associate_name": "Grace",
+            "room_id": 1,
+            "desired_start": _utc(12),
+            "desired_end": _utc(13),
+        },
+    )
+    assert free.status_code == 400
+
+    invalid = client.post(
+        "/waitlist",
+        json={
+            "associate_email": "grace@example.com",
+            "associate_name": "Grace",
+            "room_id": 1,
+            "desired_start": _utc(11),
+            "desired_end": _utc(10),
+        },
+    )
+    assert invalid.status_code == 400
+
+
 def test_utilization_endpoint_returns_metrics(client: TestClient):
     client.post(
         "/bookings",

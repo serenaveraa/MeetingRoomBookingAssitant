@@ -16,6 +16,8 @@ def render_notification(event: str, payload: Mapping[str, object]) -> tuple[str,
         return "Meeting room booking extended", f"Your booking for {room} has been extended from {previous_end} to {end}."
     if event == "booking.cancelled":
         return "Meeting room booking cancelled", f"Your booking for {room} from {start} to {end} has been cancelled."
+    if event == "waitlist.slot_available":
+        return "Meeting room slot available", f"The meeting room is now available from {start} to {end}."
     if event == "booking.vacate_reminder":
         lead = payload.get("lead_minutes", 15)
         return "Please vacate the meeting room soon", f"Your meeting will end in {lead} minutes. Another meeting is scheduled immediately after yours. Kindly vacate the room."

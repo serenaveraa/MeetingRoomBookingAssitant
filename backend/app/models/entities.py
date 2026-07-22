@@ -105,6 +105,7 @@ class WaitlistEntry(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    room_id: Mapped[int] = mapped_column(ForeignKey("rooms.id"), nullable=False)
     associate_id: Mapped[int] = mapped_column(
         ForeignKey("associates.id"), nullable=False
     )
@@ -122,6 +123,7 @@ class WaitlistEntry(Base):
     )
 
     associate: Mapped[Associate] = relationship(back_populates="waitlist_entries")
+    room: Mapped[Room] = relationship()
 
 
 ODC_COMMON_ROOM_NAME = "ODC Common Meeting Room"

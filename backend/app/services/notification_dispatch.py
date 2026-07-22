@@ -8,6 +8,7 @@ from typing import Literal
 
 from app.models import Booking
 from app.notifications import NotificationService
+from app.services.waitlist import notify_waitlist_for_cancelled_booking
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ def dispatch_booking_notification(
             )
         else:
             channels = notifier.send_booking_cancelled(booking)
+            notify_waitlist_for_cancelled_booking(
+                booking_session(booking), booking, notification_service=notifier
+            )
         logger.info(
             "Booking notification sent booking_id=%s event=%s recipient=%s channels=%s",
             booking.id,
@@ -56,3 +60,11 @@ def dispatch_booking_notification(
             event,
             recipient,
         )
+
+
+def booking_session(booking: Booking):
+    """Return the session owning a committed ORM instance."""
+    session = booking._sa_instance_state.session
+    if session is None:
+        raise RuntimeError(f"Booking {booking.id} is detached")
+    return session

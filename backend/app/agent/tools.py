@@ -33,6 +33,7 @@ from app.services.utilization import (
     get_utilization_summary as svc_get_utilization_summary,
     local_today,
 )
+from app.services.waitlist import create_waitlist_entry
 
 
 class WindowArgs(BaseModel):
@@ -42,6 +43,10 @@ class WindowArgs(BaseModel):
 
 class CreateBookingArgs(WindowArgs):
     purpose: str | None = None
+
+
+class CreateWaitlistArgs(WindowArgs):
+    room_id: int = Field(gt=0)
 
 
 class SuggestAlternativesArgs(WindowArgs):
@@ -152,6 +157,33 @@ def tool_create_booking(ctx: ToolContext, args: CreateBookingArgs) -> ToolResult
         return _fail("create_booking", exc, data=_conflict_payload(exc))
     except (InvalidBookingWindowError, BookingServiceError) as exc:
         return _fail("create_booking", exc)
+
+
+def tool_create_waitlist_entry(ctx: ToolContext, args: CreateWaitlistArgs) -> ToolResult:
+    try:
+        associate = get_or_create_associate(
+            ctx.session, email=ctx.associate_email, name=ctx.associate_name
+        )
+        entry = create_waitlist_entry(
+            ctx.session,
+            associate_id=associate.id,
+            room_id=args.room_id,
+            desired_start=args.start_at,
+            desired_end=args.end_at,
+        )
+        return ToolResult(
+            tool="create_waitlist_entry",
+            ok=True,
+            data={
+                "id": entry.id,
+                "associate_id": entry.associate_id,
+                "room_id": entry.room_id,
+                "desired_start": _iso(entry.desired_start),
+                "desired_end": _iso(entry.desired_end),
+            },
+        )
+    except (InvalidBookingWindowError, BookingServiceError, ValueError) as exc:
+        return _fail("create_waitlist_entry", exc)
 
 
 def tool_suggest_alternatives(
