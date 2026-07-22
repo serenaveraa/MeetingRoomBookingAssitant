@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import ANY, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +7,8 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.db import init_db, reset_engine
 from app.main import app
+from app.models import BookingStatus
+from app.services.booking import cancel_booking as service_cancel_booking
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +52,11 @@ def test_create_list_bookings(client: TestClient):
     )
     assert create.status_code == 201
     body = create.json()
+    assert body["id"] > 0
+    assert body["room_id"] == 1
+    assert body["status"] == BookingStatus.confirmed.value
+    assert body["start_at"].startswith("2026-07-16T10:00:00")
+    assert body["end_at"].startswith("2026-07-16T11:00:00")
     assert body["purpose"] == "Standup"
     assert body["associate_email"] == "ada@example.com"
 
@@ -58,6 +66,7 @@ def test_create_list_bookings(client: TestClient):
     )
     assert listed.status_code == 200
     assert len(listed.json()) == 1
+    assert listed.json()[0]["id"] == body["id"]
 
 
 def test_availability_free_and_busy(client: TestClient):
@@ -171,6 +180,28 @@ def test_cancel_success_and_forbidden(client: TestClient):
     )
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+
+
+def test_cancel_api_delegates_to_booking_service(client: TestClient, monkeypatch):
+    created = client.post(
+        "/bookings",
+        json={
+            "associate_email": "ada@example.com",
+            "associate_name": "Ada",
+            "start_at": _utc(10),
+            "end_at": _utc(11),
+        },
+    ).json()
+    service_spy = MagicMock(wraps=service_cancel_booking)
+    monkeypatch.setattr("app.api.bookings.cancel_booking", service_spy)
+
+    response = client.delete(
+        f"/bookings/{created['id']}",
+        headers={"X-Associate-Email": "ada@example.com"},
+    )
+
+    assert response.status_code == 200
+    service_spy.assert_called_once_with(ANY, created["id"])
 
 
 def test_create_waitlist_entry(client: TestClient):

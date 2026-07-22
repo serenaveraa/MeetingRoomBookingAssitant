@@ -17,6 +17,9 @@ from app.services.booking import create_booking
 from app.services.errors import BookingConflictError
 
 
+pytestmark = pytest.mark.postgres
+
+
 @pytest.fixture(autouse=True)
 def _postgres_db(monkeypatch):
     monkeypatch.setenv(

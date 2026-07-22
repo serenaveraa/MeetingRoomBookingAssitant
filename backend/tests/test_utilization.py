@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.config import get_settings
 from app.db import get_session_factory, init_db, reset_engine
 from app.models import Booking, BookingStatus
 from app.services.associates import get_or_create_associate
@@ -17,10 +18,12 @@ from app.services.utilization import get_utilization_summary
 def _fresh_sqlite_db(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("ODC_TIMEZONE", "America/Sao_Paulo")
+    get_settings.cache_clear()
     reset_engine()
     init_db()
     yield
     reset_engine()
+    get_settings.cache_clear()
 
 
 @pytest.fixture
