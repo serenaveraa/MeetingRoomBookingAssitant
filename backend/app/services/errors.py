@@ -41,6 +41,7 @@ class BookingConflictError(BookingServiceError):
         conflicting_end_at: datetime,
         conflicting_associate_id: int | None = None,
         conflicting_associate_name: str | None = None,
+        message: str | None = None,
     ) -> None:
         self.start_at = start_at
         self.end_at = end_at
@@ -55,6 +56,7 @@ class BookingConflictError(BookingServiceError):
             else "another associate"
         )
         super().__init__(
-            "Extension not possible. "
+            message
+            or "Extension not possible. "
             f"Room reserved by {who} starting at {conflicting_start_at}."
         )

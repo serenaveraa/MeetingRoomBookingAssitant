@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -60,9 +60,40 @@ def seed_odc_room(session: Session) -> Room:
 def init_db() -> None:
     """Create tables and seed the single ODC common room."""
     engine = get_engine()
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "postgresql":
+        _ensure_postgres_booking_exclusion(engine)
     with get_session_factory()() as session:
         seed_odc_room(session)
+
+
+def _ensure_postgres_booking_exclusion(engine: Engine) -> None:
+    """Install the production overlap guarantee after tables exist."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'ex_bookings_confirmed_room_time'
+                    ) THEN
+                        ALTER TABLE bookings
+                        ADD CONSTRAINT ex_bookings_confirmed_room_time
+                        EXCLUDE USING gist (
+                            room_id WITH =,
+                            tstzrange(start_at, end_at, '[)') WITH &&
+                        )
+                        WHERE (status = 'confirmed');
+                    END IF;
+                END $$;
+                """
+            )
+        )
 
 
 def reset_engine() -> None:

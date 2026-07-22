@@ -25,6 +25,22 @@ Wait until the `db` service shows **healthy**.
 
 Optional: copy [`.env.example`](.env.example) to `.env` at the repo root (defaults already match Docker).
 
+The backend uses `DATABASE_URL` as the single source of truth for database selection. For Postgres, the default value is:
+
+```text
+postgresql+psycopg://odc:odc@localhost:5432/meeting_room
+```
+
+On startup, Postgres initialization enables `btree_gist` and installs the confirmed-booking overlap exclusion constraint. To apply the same schema explicitly during a deployment, run the raw migration scripts in order:
+
+```bash
+docker compose exec -T db psql -U odc -d meeting_room < backend/migrations/001_add_vacate_reminder_claim.sql
+docker compose exec -T db psql -U odc -d meeting_room < backend/migrations/002_add_waitlist_room.sql
+docker compose exec -T db psql -U odc -d meeting_room < backend/migrations/003_add_booking_overlap_exclusion.sql
+```
+
+The exclusion constraint requires the PostgreSQL `btree_gist` extension. It applies only to `confirmed` bookings and treats time windows as half-open intervals `[start_at, end_at)`, so adjacent bookings are allowed. SQLite has no equivalent exclusion constraint; it continues to use the booking service's transactional application-level overlap check.
+
 Inspect tables after the API has started once:
 
 ```bash

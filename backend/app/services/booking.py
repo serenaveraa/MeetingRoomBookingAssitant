@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Select, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
@@ -101,6 +102,32 @@ def _raise_if_conflicts(
     )
 
 
+def _is_booking_exclusion_violation(exc: IntegrityError) -> bool:
+    original = exc.orig
+    constraint_name = getattr(getattr(original, "diag", None), "constraint_name", None)
+    return constraint_name == "ex_bookings_confirmed_room_time"
+
+
+def _raise_database_conflict(
+    session: Session,
+    *,
+    room_id: int,
+    start_at: datetime,
+    end_at: datetime,
+) -> None:
+    conflicts = find_conflicts(session, room_id, start_at, end_at)
+    if conflicts:
+        _raise_if_conflicts(conflicts, start_at=start_at, end_at=end_at)
+    raise BookingConflictError(
+        start_at=start_at,
+        end_at=end_at,
+        conflicting_booking_id=None,
+        conflicting_start_at=start_at,
+        conflicting_end_at=end_at,
+        message="Room is already booked for the requested time.",
+    )
+
+
 def create_booking(
     session: Session,
     *,
@@ -137,6 +164,16 @@ def create_booking(
         session.add(booking)
         session.commit()
         session.refresh(booking)
+    except IntegrityError as exc:
+        session.rollback()
+        if not _is_booking_exclusion_violation(exc):
+            raise
+        _raise_database_conflict(
+            session,
+            room_id=resolved_room_id,
+            start_at=start_utc,
+            end_at=end_utc,
+        )
     except Exception:
         session.rollback()
         raise
@@ -175,6 +212,16 @@ def update_booking_window(
         booking.end_at = end_utc
         session.commit()
         session.refresh(booking)
+    except IntegrityError as exc:
+        session.rollback()
+        if not _is_booking_exclusion_violation(exc):
+            raise
+        _raise_database_conflict(
+            session,
+            room_id=booking.room_id,
+            start_at=start_utc,
+            end_at=end_utc,
+        )
     except Exception:
         session.rollback()
         raise
