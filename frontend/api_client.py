@@ -67,8 +67,8 @@ def get_utilization(
 ) -> dict[str, Any]:
     url = f"{base_url or get_api_base_url()}/insights/utilization"
     params: dict[str, str] = {
-        "start_date": start_date.date().isoformat(),
-        "end_date": end_date.date().isoformat(),
+       "start_date": start_date.isoformat(),
+       "end_date": end_date.isoformat(),
     }
     try:
         response = httpx.get(url, params=params, timeout=timeout)
