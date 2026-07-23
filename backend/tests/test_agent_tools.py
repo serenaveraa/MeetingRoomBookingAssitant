@@ -31,6 +31,7 @@ from app.services.errors import (
     BookingConflictError,
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
+    OwnershipError,
 )
 from app.services.utilization import UtilizationSummary
 
@@ -433,6 +434,23 @@ def test_tool_extend_not_found():
         result = tool_extend_booking(ctx, ExtendBookingArgs(minutes=15))
     assert result.ok is False
     assert result.error_type == "MyMeetingNotFoundError"
+
+
+def test_tool_mutation_reports_ownership_failure():
+    ctx = _ctx()
+    associate = MagicMock(id=10)
+    with (
+        patch("app.agent.tools.get_or_create_associate", return_value=associate),
+        patch(
+            "app.agent.tools.extend_my_meeting",
+            side_effect=OwnershipError(7, associate.id),
+        ),
+    ):
+        result = tool_extend_booking(ctx, ExtendBookingArgs(minutes=15))
+
+    assert result.ok is False
+    assert result.error_type == "OwnershipError"
+    assert "does not own" in (result.error or "")
 
 
 def test_tool_failure_paths_are_structured_without_external_calls():

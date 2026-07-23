@@ -12,6 +12,7 @@ from app.config import Settings, get_settings
 from app.db import get_session_factory
 from app.models import Booking, BookingStatus
 from app.notifications import NotificationService
+from app.observability import emit_event
 
 logger = logging.getLogger(__name__)
 
@@ -131,14 +132,28 @@ def run_vacate_reminder_job(
                 _finish_claim(session, candidate.id, datetime.now(timezone.utc))
                 sent_count += 1
                 logger.info(
-                    "Vacate reminder sent booking_id=%s room=%s recipient=%s channels=%s",
-                    booking.id,
-                    booking.room.name,
-                    booking.associate.email,
-                    ",".join(channels),
+                    "Vacate reminder sent booking_id=%s room=%s channels=%s",
+                    booking.id, booking.room.name, ",".join(channels)
+                )
+                emit_event(
+                    logger,
+                    "reminder_send",
+                    booking_id=booking.id,
+                    associate_id=booking.associate_id,
+                    room_id=booking.room_id,
+                    channels=channels,
+                    result="success",
                 )
             except Exception:
                 session.rollback()
                 _release_claim(session, candidate.id)
+                emit_event(
+                    logger,
+                    "reminder_send",
+                    level=logging.WARNING,
+                    booking_id=candidate.id,
+                    result="failure",
+                    reason="delivery_error",
+                )
                 logger.exception("Vacate reminder delivery failed booking_id=%s", candidate.id)
     return sent_count

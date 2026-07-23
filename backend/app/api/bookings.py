@@ -19,7 +19,7 @@ from app.api.schemas import (
 )
 from app.db import get_db
 from app.models import Booking, BookingStatus
-from app.services.associates import get_or_create_associate
+from app.services.associates import get_associate_by_email, get_or_create_associate
 from app.services.availability import check_availability, suggest_alternatives
 from app.services.booking import (
     cancel_booking,
@@ -31,6 +31,7 @@ from app.services.errors import (
     BookingConflictError,
     BookingNotFoundError,
     InvalidBookingWindowError,
+    OwnershipError,
 )
 from app.services.timeutil import ensure_utc
 from app.services.utilization import get_utilization_summary
@@ -87,6 +88,13 @@ def _require_owner(booking: Booking, associate_email: str) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the booking owner can perform this action",
         )
+
+
+def _actor_associate_id(db: Session, associate_email: str) -> int:
+    associate = get_associate_by_email(db, associate_email)
+    if associate is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unknown associate identity")
+    return associate.id
 
 
 def _conflict_http(exc: BookingConflictError) -> HTTPException:
@@ -242,17 +250,23 @@ def patch_extend_booking(
     booking = db.get(Booking, booking_id)
     if booking is None:
         raise HTTPException(status_code=404, detail=f"Booking {booking_id} not found")
-    _ = booking.associate
-    _require_owner(booking, x_associate_email)
+    actor_associate_id = _actor_associate_id(db, x_associate_email)
 
     try:
-        updated = extend_booking(db, booking_id, minutes=body.minutes)
+        updated = extend_booking(
+            db,
+            booking_id,
+            minutes=body.minutes,
+            actor_associate_id=actor_associate_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except BookingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BookingConflictError as exc:
         raise _conflict_http(exc) from exc
+    except OwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     _ = updated.associate
     return _booking_out(updated)
@@ -267,13 +281,18 @@ def delete_booking(
     booking = db.get(Booking, booking_id)
     if booking is None:
         raise HTTPException(status_code=404, detail=f"Booking {booking_id} not found")
-    _ = booking.associate
-    _require_owner(booking, x_associate_email)
+    actor_associate_id = _actor_associate_id(db, x_associate_email)
 
     try:
-        cancelled = cancel_booking(db, booking_id)
+        cancelled = cancel_booking(
+            db,
+            booking_id,
+            actor_associate_id=actor_associate_id,
+        )
     except BookingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     _ = cancelled.associate
     return _booking_out(cancelled)

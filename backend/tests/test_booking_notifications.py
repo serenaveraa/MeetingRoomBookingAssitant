@@ -70,7 +70,9 @@ def test_extend_dispatches_new_and_previous_end_after_commit(monkeypatch):
             session, associate_id=_associate_id(), start_at=_at(10), end_at=_at(11)
         )
         notifier.reset_mock()
-        updated = extend_booking(session, booking.id, minutes=30)
+        updated = extend_booking(
+            session, booking.id, minutes=30, actor_associate_id=booking.associate_id
+        )
         assert session.get(Booking, booking.id).end_at.replace(tzinfo=timezone.utc) == _at(11, 30)
     notifier.send_booking_extended.assert_called_once_with(
         updated, previous_end_at=_at(11)
@@ -93,7 +95,9 @@ def test_cancel_dispatches_cancellation_after_commit(monkeypatch):
             session, associate_id=_associate_id(), start_at=_at(10), end_at=_at(11)
         )
         notifier.reset_mock()
-        cancelled = cancel_booking(session, booking.id)
+        cancelled = cancel_booking(
+            session, booking.id, actor_associate_id=booking.associate_id
+        )
         assert session.get(Booking, booking.id).status.value == "cancelled"
     notifier.send_booking_cancelled.assert_called_once_with(cancelled)
 
@@ -173,7 +177,7 @@ def test_cancel_notifies_all_fully_contained_waitlist_entries_and_deduplicates(m
         session.commit()
         notifier.reset_mock()
 
-        cancel_booking(session, booking.id)
+        cancel_booking(session, booking.id, actor_associate_id=booking.associate_id)
         entries = session.query(WaitlistEntry).order_by(WaitlistEntry.id).all()
         assert entries[0].notified_at is not None
         assert entries[1].notified_at is not None
@@ -211,7 +215,7 @@ def test_waitlist_notification_failure_does_not_change_cancelled_booking(monkeyp
         )
         session.add(wait)
         session.commit()
-        cancel_booking(session, booking.id)
+        cancel_booking(session, booking.id, actor_associate_id=booking.associate_id)
         assert session.get(Booking, booking.id).status.value == "cancelled"
         assert session.get(WaitlistEntry, wait.id).notified_at is None
     assert "Waitlist notification failed" in caplog.text

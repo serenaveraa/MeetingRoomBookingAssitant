@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Select, select
@@ -17,9 +18,14 @@ from app.services.errors import (
     BookingNotFoundError,
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
+    OwnershipError,
 )
+from app.services.authorization import require_booking_owner
+from app.observability import emit_event
 from app.services.notification_dispatch import dispatch_booking_notification
 from app.services.timeutil import as_utc, ensure_utc
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_window(start_at: datetime, end_at: datetime) -> None:
@@ -163,6 +169,15 @@ def create_booking(
         )
         session.add(booking)
         session.commit()
+        emit_event(
+            logger,
+            "booking_outcome",
+            action="create",
+            result="success",
+            booking_id=booking.id,
+            associate_id=associate_id,
+            room_id=resolved_room_id,
+        )
         session.refresh(booking)
     except IntegrityError as exc:
         session.rollback()
@@ -175,6 +190,16 @@ def create_booking(
             end_at=end_utc,
         )
     except Exception:
+        emit_event(
+            logger,
+            "booking_outcome",
+            level=logging.WARNING,
+            action="create",
+            result="failure",
+            associate_id=associate_id,
+            room_id=resolved_room_id,
+            reason="overlap_constraint",
+        )
         session.rollback()
         raise
     dispatch_booking_notification("booking.confirmed", booking)
@@ -228,18 +253,56 @@ def update_booking_window(
     return booking
 
 
-def cancel_booking(session: Session, booking_id: int) -> Booking:
+def cancel_booking(
+    session: Session,
+    booking_id: int,
+    *,
+    actor_associate_id: int,
+) -> Booking:
     """Mark a booking cancelled inside a transaction."""
     try:
         booking = session.get(Booking, booking_id, with_for_update=True)
         if booking is None:
             raise BookingNotFoundError(booking_id)
 
+        require_booking_owner(booking, actor_associate_id)
         booking.status = BookingStatus.cancelled
         session.commit()
         session.refresh(booking)
+        emit_event(
+            logger,
+            "booking_outcome",
+            action="cancel",
+            result="success",
+            booking_id=booking.id,
+            associate_id=actor_associate_id,
+            room_id=booking.room_id,
+        )
+    except OwnershipError:
+        session.rollback()
+        emit_event(
+            logger,
+            "booking_outcome",
+            level=logging.WARNING,
+            action="cancel",
+            result="failure",
+            booking_id=booking_id,
+            associate_id=actor_associate_id,
+            reason="not_owner",
+        )
+        raise
     except Exception:
         session.rollback()
+        emit_event(
+            logger,
+            "booking_outcome",
+            level=logging.WARNING,
+            action="cancel",
+            result="failure",
+            booking_id=booking_id,
+            associate_id=actor_associate_id,
+            reason="exception",
+        )
         raise
     dispatch_booking_notification("booking.cancelled", booking)
     return booking
@@ -250,6 +313,7 @@ def extend_booking(
     booking_id: int,
     *,
     minutes: int,
+    actor_associate_id: int,
 ) -> Booking:
     """Extend a confirmed booking's end time by minutes, or fail closed on conflict."""
     if minutes <= 0:
@@ -260,6 +324,7 @@ def extend_booking(
         raise BookingNotFoundError(booking_id)
     if booking.status != BookingStatus.confirmed:
         raise BookingNotFoundError(booking_id)
+    require_booking_owner(booking, actor_associate_id)
 
     previous_end_at = as_utc(booking.end_at)
     new_end = previous_end_at + timedelta(minutes=minutes)
@@ -268,6 +333,16 @@ def extend_booking(
         booking_id,
         start_at=as_utc(booking.start_at),
         end_at=new_end,
+    )
+    emit_event(
+        logger,
+        "booking_outcome",
+        action="extend",
+        result="success",
+        booking_id=updated.id,
+        associate_id=actor_associate_id,
+        room_id=updated.room_id,
+        minutes=minutes,
     )
     dispatch_booking_notification(
         "booking.extended", updated, previous_end_at=previous_end_at
@@ -402,7 +477,12 @@ def extend_my_meeting(
     at: datetime | None = None,
 ) -> Booking:
     booking = resolve_my_meeting(session, associate_id, at=at)
-    return extend_booking(session, booking.id, minutes=minutes)
+    return extend_booking(
+        session,
+        booking.id,
+        minutes=minutes,
+        actor_associate_id=associate_id,
+    )
 
 
 def cancel_my_meeting(
@@ -412,4 +492,8 @@ def cancel_my_meeting(
     at: datetime | None = None,
 ) -> Booking:
     booking = resolve_my_meeting(session, associate_id, at=at)
-    return cancel_booking(session, booking.id)
+    return cancel_booking(
+        session,
+        booking.id,
+        actor_associate_id=associate_id,
+    )

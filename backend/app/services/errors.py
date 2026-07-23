@@ -22,6 +22,13 @@ class BookingNotFoundError(BookingServiceError):
         super().__init__(message or f"Booking {booking_id} not found")
 
 
+class OwnershipError(BookingServiceError):
+    def __init__(self, booking_id: int, associate_id: int) -> None:
+        self.booking_id = booking_id
+        self.associate_id = associate_id
+        super().__init__(f"Associate {associate_id} does not own booking {booking_id}")
+
+
 class MyMeetingNotFoundError(BookingServiceError):
     def __init__(self, associate_id: int) -> None:
         self.associate_id = associate_id

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -27,6 +29,7 @@ from app.services.errors import (
     BookingServiceError,
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
+    OwnershipError,
 )
 from app.services.timeutil import as_utc
 from app.services.utilization import (
@@ -34,6 +37,32 @@ from app.services.utilization import (
     local_today,
 )
 from app.services.waitlist import create_waitlist_entry
+from app.observability import emit_event
+
+logger = logging.getLogger(__name__)
+
+
+def _logged_tool(func):
+    def wrapped(ctx: ToolContext, *args, **kwargs):
+        started = time.perf_counter()
+        result = func(ctx, *args, **kwargs)
+        emit_event(
+            logger,
+            "agent_tool_call",
+            tool=func.__name__.removeprefix("tool_"),
+            associate_id=_associate_id_from_result(result),
+            result="success" if result.ok else "failure",
+            error_type=result.error_type,
+            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        return result
+
+    return wrapped
+
+
+def _associate_id_from_result(result: ToolResult) -> int | None:
+    value = result.data.get("associate_id")
+    return value if isinstance(value, int) else None
 
 
 class WindowArgs(BaseModel):
@@ -119,6 +148,7 @@ def _fail(tool: str, exc: Exception, *, data: dict[str, Any] | None = None) -> T
     )
 
 
+@_logged_tool
 def tool_check_availability(ctx: ToolContext, args: WindowArgs) -> ToolResult:
     try:
         result = svc_check_availability(ctx.session, args.start_at, args.end_at)
@@ -134,6 +164,7 @@ def tool_check_availability(ctx: ToolContext, args: WindowArgs) -> ToolResult:
         return _fail("check_availability", exc)
 
 
+@_logged_tool
 def tool_create_booking(ctx: ToolContext, args: CreateBookingArgs) -> ToolResult:
     try:
         associate = get_or_create_associate(
@@ -159,6 +190,7 @@ def tool_create_booking(ctx: ToolContext, args: CreateBookingArgs) -> ToolResult
         return _fail("create_booking", exc)
 
 
+@_logged_tool
 def tool_create_waitlist_entry(ctx: ToolContext, args: CreateWaitlistArgs) -> ToolResult:
     try:
         associate = get_or_create_associate(
@@ -186,6 +218,7 @@ def tool_create_waitlist_entry(ctx: ToolContext, args: CreateWaitlistArgs) -> To
         return _fail("create_waitlist_entry", exc)
 
 
+@_logged_tool
 def tool_suggest_alternatives(
     ctx: ToolContext, args: SuggestAlternativesArgs
 ) -> ToolResult:
@@ -210,6 +243,7 @@ def tool_suggest_alternatives(
         return _fail("suggest_alternatives", exc)
 
 
+@_logged_tool
 def tool_extend_booking(ctx: ToolContext, args: ExtendBookingArgs) -> ToolResult:
     try:
         associate = get_or_create_associate(
@@ -227,10 +261,11 @@ def tool_extend_booking(ctx: ToolContext, args: ExtendBookingArgs) -> ToolResult
         )
     except BookingConflictError as exc:
         return _fail("extend_booking", exc, data=_conflict_payload(exc))
-    except (MyMeetingNotFoundError, BookingServiceError, ValueError) as exc:
+    except (MyMeetingNotFoundError, OwnershipError, BookingServiceError, ValueError) as exc:
         return _fail("extend_booking", exc)
 
 
+@_logged_tool
 def tool_cancel_booking(ctx: ToolContext) -> ToolResult:
     try:
         associate = get_or_create_associate(
@@ -244,10 +279,11 @@ def tool_cancel_booking(ctx: ToolContext) -> ToolResult:
             ok=True,
             data=_booking_payload(booking),
         )
-    except (MyMeetingNotFoundError, BookingServiceError) as exc:
+    except (MyMeetingNotFoundError, OwnershipError, BookingServiceError) as exc:
         return _fail("cancel_booking", exc)
 
 
+@_logged_tool
 def tool_list_my_bookings(ctx: ToolContext, args: ListMyBookingsArgs) -> ToolResult:
     try:
         associate = get_or_create_associate(
@@ -270,6 +306,7 @@ def tool_list_my_bookings(ctx: ToolContext, args: ListMyBookingsArgs) -> ToolRes
         return _fail("list_my_bookings", exc)
 
 
+@_logged_tool
 def tool_get_utilization_summary(
     ctx: ToolContext, args: UtilizationArgs
 ) -> ToolResult:

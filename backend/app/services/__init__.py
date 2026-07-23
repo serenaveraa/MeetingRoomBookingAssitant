@@ -26,6 +26,7 @@ from app.services.errors import (
     BookingServiceError,
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
+    OwnershipError,
 )
 from app.services.utilization import UtilizationSummary, get_utilization_summary
 
@@ -36,6 +37,7 @@ __all__ = [
     "BookingServiceError",
     "InvalidBookingWindowError",
     "MyMeetingNotFoundError",
+    "OwnershipError",
     "TimeWindow",
     "UtilizationSummary",
     "cancel_booking",

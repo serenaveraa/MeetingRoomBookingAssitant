@@ -9,8 +9,10 @@ from app.services import (
     BookingConflictError,
     BookingNotFoundError,
     InvalidBookingWindowError,
+    OwnershipError,
     cancel_booking,
     create_booking,
+    extend_booking,
     update_booking_window,
 )
 
@@ -135,7 +137,9 @@ def test_cancel_frees_slot_for_new_booking(
             start_at=_at(10),
             end_at=_at(11),
         )
-        cancelled = cancel_booking(session, existing.id)
+        cancelled = cancel_booking(
+            session, existing.id, actor_associate_id=existing.associate_id
+        )
         assert cancelled.status == BookingStatus.cancelled
 
         replacement = create_booking(
@@ -204,4 +208,27 @@ def test_invalid_window_and_missing_booking(associate_id: int):
             )
 
         with pytest.raises(BookingNotFoundError):
-            cancel_booking(session, booking_id=99999)
+            cancel_booking(session, booking_id=99999, actor_associate_id=associate_id)
+
+
+def test_mutations_require_the_booking_owner(associate_id: int, other_associate_id: int):
+    with get_session_factory()() as session:
+        booking = create_booking(
+            session,
+            associate_id=associate_id,
+            start_at=_at(10),
+            end_at=_at(11),
+        )
+        with pytest.raises(OwnershipError):
+            cancel_booking(
+                session,
+                booking.id,
+                actor_associate_id=other_associate_id,
+            )
+        with pytest.raises(OwnershipError):
+            extend_booking(
+                session,
+                booking.id,
+                minutes=15,
+                actor_associate_id=other_associate_id,
+            )
