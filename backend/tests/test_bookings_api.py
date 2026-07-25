@@ -201,7 +201,9 @@ def test_cancel_api_delegates_to_booking_service(client: TestClient, monkeypatch
     )
 
     assert response.status_code == 200
-    service_spy.assert_called_once_with(ANY, created["id"])
+    assert service_spy.call_count == 1
+    assert service_spy.call_args.args[1] == created["id"]
+    assert "associate_id" in service_spy.call_args.kwargs
 
 
 def test_create_waitlist_entry(client: TestClient):

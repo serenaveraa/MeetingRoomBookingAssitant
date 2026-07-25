@@ -8,9 +8,11 @@ from app.models import Associate, BookingStatus
 from app.services import (
     BookingConflictError,
     BookingNotFoundError,
+    BookingOwnershipError,
     InvalidBookingWindowError,
     cancel_booking,
     create_booking,
+    extend_booking,
     update_booking_window,
 )
 
@@ -146,6 +148,39 @@ def test_cancel_frees_slot_for_new_booking(
             purpose="Rebooked",
         )
         assert replacement.status == BookingStatus.confirmed
+
+
+def test_cancel_requires_booking_owner(
+    associate_id: int, other_associate_id: int
+):
+    with get_session_factory()() as session:
+        existing = create_booking(
+            session,
+            associate_id=associate_id,
+            start_at=_at(10),
+            end_at=_at(11),
+        )
+        with pytest.raises(BookingOwnershipError):
+            cancel_booking(session, existing.id, associate_id=other_associate_id)
+
+
+def test_extend_requires_booking_owner(
+    associate_id: int, other_associate_id: int
+):
+    with get_session_factory()() as session:
+        existing = create_booking(
+            session,
+            associate_id=associate_id,
+            start_at=_at(10),
+            end_at=_at(11),
+        )
+        with pytest.raises(BookingOwnershipError):
+            extend_booking(
+                session,
+                existing.id,
+                minutes=15,
+                associate_id=other_associate_id,
+            )
 
 
 def test_update_window_conflict_and_success(

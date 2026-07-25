@@ -23,6 +23,7 @@ from app.services.booking import (
 from app.services.errors import (
     BookingConflictError,
     BookingNotFoundError,
+    BookingOwnershipError,
     BookingServiceError,
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
