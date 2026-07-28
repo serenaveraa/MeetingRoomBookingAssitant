@@ -10,6 +10,7 @@ import httpx
 
 from app.config import Settings
 from app.models import Associate
+from app.notifications.brevo import BrevoClient
 from app.notifications.content import render_notification
 
 
@@ -33,6 +34,7 @@ class BrevoChannel:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.client = BrevoClient(settings)
 
     @classmethod
     def is_enabled(cls, settings: Settings) -> bool:
@@ -41,22 +43,25 @@ class BrevoChannel:
     def send(
         self, event: str, associate: Associate, payload: Mapping[str, object]
     ) -> None:
-        subject, text = render_notification(event, payload)
-        response = httpx.post(
-            "https://api.brevo.com/v3/smtp/email",
-            headers={"api-key": self.settings.brevo_api_key},
-            json={
-                "sender": {
-                    "email": self.settings.brevo_sender_email,
-                    "name": self.settings.brevo_sender_name,
-                },
-                "to": [{"email": associate.email, "name": associate.name}],
-                "subject": subject,
-                "textContent": text,
-            },
-            timeout=10.0,
+        if event not in {
+            "booking.confirmed",
+            "booking.extended",
+            "booking.cancelled",
+            "booking.vacate_reminder",
+            "waitlist.slot_available",
+        }:
+            raise ValueError(f"Unsupported Brevo event: {event}")
+
+        result = self.client.send(
+            event=event,
+            recipient_email=associate.email,
+            recipient_name=associate.name,
+            payload=payload,
         )
-        response.raise_for_status()
+        if not result.success:
+            raise RuntimeError(
+                f"Brevo send failed event={event} recipient={associate.email} error={result.error}"
+            )
 
 
 class TeamsWebhookChannel:

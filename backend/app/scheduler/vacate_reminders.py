@@ -131,7 +131,7 @@ def run_vacate_reminder_job(
                 _finish_claim(session, candidate.id, datetime.now(timezone.utc))
                 sent_count += 1
                 logger.info(
-                    "Vacate reminder sent booking_id=%s room=%s recipient=%s channels=%s",
+                    "vacate.reminder booking_id=%s room=%s recipient=%s channels=%s result=success",
                     booking.id,
                     booking.room.name,
                     booking.associate.email,

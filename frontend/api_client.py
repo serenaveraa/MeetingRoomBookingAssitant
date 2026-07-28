@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import httpx
@@ -58,17 +58,23 @@ def list_bookings(
         raise ApiError(f"Failed to load bookings from {url}: {exc}") from exc
 
 
+def _format_date(value: date | datetime) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    return value.isoformat()
+
+
 def get_utilization(
-    start_date: datetime,
-    end_date: datetime,
+    start_date: date | datetime,
+    end_date: date | datetime,
     *,
     base_url: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     url = f"{base_url or get_api_base_url()}/insights/utilization"
     params: dict[str, str] = {
-        "start_date": start_date.date().isoformat(),
-        "end_date": end_date.date().isoformat(),
+        "start_date": _format_date(start_date),
+        "end_date": _format_date(end_date),
     }
     try:
         response = httpx.get(url, params=params, timeout=timeout)

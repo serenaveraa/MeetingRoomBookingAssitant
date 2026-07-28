@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -34,6 +35,8 @@ from app.services.utilization import (
     local_today,
 )
 from app.services.waitlist import create_waitlist_entry
+
+logger = logging.getLogger(__name__)
 
 
 class WindowArgs(BaseModel):
@@ -109,7 +112,22 @@ def _conflict_payload(exc: BookingConflictError) -> dict[str, Any]:
     }
 
 
-def _fail(tool: str, exc: Exception, *, data: dict[str, Any] | None = None) -> ToolResult:
+def _fail(
+    tool: str,
+    ctx: ToolContext,
+    exc: Exception,
+    *,
+    data: dict[str, Any] | None = None,
+    duration_ms: int | None = None,
+) -> ToolResult:
+    logger.info(
+        "tool.call tool=%s associate_email=%s action=%s ok=false error_type=%s duration_ms=%s",
+        tool,
+        ctx.associate_email,
+        tool,
+        type(exc).__name__,
+        duration_ms,
+    )
     return ToolResult(
         tool=tool,
         ok=False,
@@ -119,7 +137,25 @@ def _fail(tool: str, exc: Exception, *, data: dict[str, Any] | None = None) -> T
     )
 
 
+def _log_tool_call(
+    tool: str,
+    ctx: ToolContext,
+    action: str,
+    ok: bool,
+    duration_ms: int,
+) -> None:
+    logger.info(
+        "tool.call tool=%s associate_email=%s action=%s ok=%s duration_ms=%s",
+        tool,
+        ctx.associate_email,
+        action,
+        ok,
+        duration_ms,
+    )
+
+
 def tool_check_availability(ctx: ToolContext, args: WindowArgs) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         result = svc_check_availability(ctx.session, args.start_at, args.end_at)
         data: dict[str, Any] = {
@@ -129,12 +165,25 @@ def tool_check_availability(ctx: ToolContext, args: WindowArgs) -> ToolResult:
         }
         if result.conflict is not None:
             data["conflict"] = _booking_payload(result.conflict)
+        _log_tool_call(
+            "check_availability",
+            ctx,
+            action="availability",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
         return ToolResult(tool="check_availability", ok=True, data=data)
     except (InvalidBookingWindowError, BookingServiceError) as exc:
-        return _fail("check_availability", exc)
+        return _fail(
+            "check_availability",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def tool_create_booking(ctx: ToolContext, args: CreateBookingArgs) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         associate = get_or_create_associate(
             ctx.session,
@@ -148,18 +197,38 @@ def tool_create_booking(ctx: ToolContext, args: CreateBookingArgs) -> ToolResult
             end_at=args.end_at,
             purpose=args.purpose,
         )
-        return ToolResult(
+        result = ToolResult(
             tool="create_booking",
             ok=True,
             data=_booking_payload(booking),
         )
+        _log_tool_call(
+            "create_booking",
+            ctx,
+            action="create_booking",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
+        return result
     except BookingConflictError as exc:
-        return _fail("create_booking", exc, data=_conflict_payload(exc))
+        return _fail(
+            "create_booking",
+            ctx,
+            exc,
+            data=_conflict_payload(exc),
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
     except (InvalidBookingWindowError, BookingServiceError) as exc:
-        return _fail("create_booking", exc)
+        return _fail(
+            "create_booking",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def tool_create_waitlist_entry(ctx: ToolContext, args: CreateWaitlistArgs) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         associate = get_or_create_associate(
             ctx.session, email=ctx.associate_email, name=ctx.associate_name
@@ -171,7 +240,7 @@ def tool_create_waitlist_entry(ctx: ToolContext, args: CreateWaitlistArgs) -> To
             desired_start=args.start_at,
             desired_end=args.end_at,
         )
-        return ToolResult(
+        result = ToolResult(
             tool="create_waitlist_entry",
             ok=True,
             data={
@@ -182,13 +251,27 @@ def tool_create_waitlist_entry(ctx: ToolContext, args: CreateWaitlistArgs) -> To
                 "desired_end": _iso(entry.desired_end),
             },
         )
+        _log_tool_call(
+            "create_waitlist_entry",
+            ctx,
+            action="create_waitlist_entry",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
+        return result
     except (InvalidBookingWindowError, BookingServiceError, ValueError) as exc:
-        return _fail("create_waitlist_entry", exc)
+        return _fail(
+            "create_waitlist_entry",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def tool_suggest_alternatives(
     ctx: ToolContext, args: SuggestAlternativesArgs
 ) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         windows = svc_suggest_alternatives(
             ctx.session,
@@ -196,7 +279,7 @@ def tool_suggest_alternatives(
             args.end_at,
             limit=args.limit,
         )
-        return ToolResult(
+        result = ToolResult(
             tool="suggest_alternatives",
             ok=True,
             data={
@@ -206,11 +289,25 @@ def tool_suggest_alternatives(
                 ]
             },
         )
+        _log_tool_call(
+            "suggest_alternatives",
+            ctx,
+            action="suggest_alternatives",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
+        return result
     except (InvalidBookingWindowError, BookingServiceError) as exc:
-        return _fail("suggest_alternatives", exc)
+        return _fail(
+            "suggest_alternatives",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def tool_extend_booking(ctx: ToolContext, args: ExtendBookingArgs) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         associate = get_or_create_associate(
             ctx.session,
@@ -220,18 +317,38 @@ def tool_extend_booking(ctx: ToolContext, args: ExtendBookingArgs) -> ToolResult
         booking = extend_my_meeting(
             ctx.session, associate.id, minutes=args.minutes
         )
-        return ToolResult(
+        result = ToolResult(
             tool="extend_booking",
             ok=True,
             data={**_booking_payload(booking), "extended_by_minutes": args.minutes},
         )
+        _log_tool_call(
+            "extend_booking",
+            ctx,
+            action="extend_booking",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
+        return result
     except BookingConflictError as exc:
-        return _fail("extend_booking", exc, data=_conflict_payload(exc))
+        return _fail(
+            "extend_booking",
+            ctx,
+            exc,
+            data=_conflict_payload(exc),
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
     except (MyMeetingNotFoundError, BookingServiceError, ValueError) as exc:
-        return _fail("extend_booking", exc)
+        return _fail(
+            "extend_booking",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def tool_cancel_booking(ctx: ToolContext) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         associate = get_or_create_associate(
             ctx.session,
@@ -239,16 +356,30 @@ def tool_cancel_booking(ctx: ToolContext) -> ToolResult:
             name=ctx.associate_name,
         )
         booking = cancel_my_meeting(ctx.session, associate.id)
-        return ToolResult(
+        result = ToolResult(
             tool="cancel_booking",
             ok=True,
             data=_booking_payload(booking),
         )
+        _log_tool_call(
+            "cancel_booking",
+            ctx,
+            action="cancel_booking",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
+        return result
     except (MyMeetingNotFoundError, BookingServiceError) as exc:
-        return _fail("cancel_booking", exc)
+        return _fail(
+            "cancel_booking",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def tool_list_my_bookings(ctx: ToolContext, args: ListMyBookingsArgs) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         associate = get_or_create_associate(
             ctx.session,
@@ -261,18 +392,32 @@ def tool_list_my_bookings(ctx: ToolContext, args: ListMyBookingsArgs) -> ToolRes
             start_at=args.start_at,
             end_at=args.end_at,
         )
-        return ToolResult(
+        result = ToolResult(
             tool="list_my_bookings",
             ok=True,
             data={"bookings": [_booking_payload(b) for b in bookings]},
         )
+        _log_tool_call(
+            "list_my_bookings",
+            ctx,
+            action="list_my_bookings",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
+        return result
     except (InvalidBookingWindowError, BookingServiceError) as exc:
-        return _fail("list_my_bookings", exc)
+        return _fail(
+            "list_my_bookings",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def tool_get_utilization_summary(
     ctx: ToolContext, args: UtilizationArgs
 ) -> ToolResult:
+    start = datetime.now(timezone.utc)
     try:
         summary = svc_get_utilization_summary(
             ctx.session,
@@ -280,7 +425,7 @@ def tool_get_utilization_summary(
             start_date=args.start_date,
             end_date=args.end_date,
         )
-        return ToolResult(
+        result = ToolResult(
             tool="get_utilization_summary",
             ok=True,
             data={
@@ -296,8 +441,21 @@ def tool_get_utilization_summary(
                 "summary": summary.overall_summary,
             },
         )
+        _log_tool_call(
+            "get_utilization_summary",
+            ctx,
+            action="get_utilization_summary",
+            ok=True,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
+        return result
     except (BookingServiceError, ValueError) as exc:
-        return _fail("get_utilization_summary", exc)
+        return _fail(
+            "get_utilization_summary",
+            ctx,
+            exc,
+            duration_ms=int((datetime.now(timezone.utc) - start).total_seconds() * 1000),
+        )
 
 
 def _window_from_decision(decision: AgentDecision) -> tuple[datetime, datetime]:
@@ -317,7 +475,7 @@ def run_tools_for_intent(
         try:
             start_at, end_at = _window_from_decision(decision)
         except EntityResolutionError as exc:
-            return [_fail("check_availability", exc)]
+            return [_fail("check_availability", ctx, exc)]
         results.append(
             tool_check_availability(ctx, WindowArgs(start_at=start_at, end_at=end_at))
         )
@@ -327,7 +485,7 @@ def run_tools_for_intent(
         try:
             start_at, end_at = _window_from_decision(decision)
         except EntityResolutionError as exc:
-            return [_fail("create_booking", exc)]
+            return [_fail("create_booking", ctx, exc)]
         create_result = tool_create_booking(
             ctx,
             CreateBookingArgs(
@@ -352,6 +510,7 @@ def run_tools_for_intent(
             return [
                 _fail(
                     "extend_booking",
+                    ctx,
                     EntityResolutionError("duration_minutes is required to extend"),
                 )
             ]

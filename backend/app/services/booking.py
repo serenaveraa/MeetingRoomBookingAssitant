@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import sys
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Select, select
@@ -15,11 +17,14 @@ from app.models import (
 from app.services.errors import (
     BookingConflictError,
     BookingNotFoundError,
+    BookingOwnershipError,
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
 )
 from app.services.notification_dispatch import dispatch_booking_notification
 from app.services.timeutil import as_utc, ensure_utc
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_window(start_at: datetime, end_at: datetime) -> None:
@@ -128,6 +133,19 @@ def _raise_database_conflict(
     )
 
 
+def ensure_booking_owner(
+    session: Session,
+    booking_id: int,
+    associate_id: int,
+) -> Booking:
+    booking = session.get(Booking, booking_id, with_for_update=True)
+    if booking is None:
+        raise BookingNotFoundError(booking_id)
+    if booking.associate_id != associate_id:
+        raise BookingOwnershipError(booking_id, associate_id)
+    return booking
+
+
 def create_booking(
     session: Session,
     *,
@@ -178,6 +196,12 @@ def create_booking(
         session.rollback()
         raise
     dispatch_booking_notification("booking.confirmed", booking)
+    logger.info(
+        "booking.outcome action=create booking_id=%s associate_id=%s room_id=%s result=success",
+        booking.id,
+        booking.associate_id,
+        booking.room_id,
+    )
     return booking
 
 
@@ -228,9 +252,16 @@ def update_booking_window(
     return booking
 
 
-def cancel_booking(session: Session, booking_id: int) -> Booking:
+def cancel_booking(
+    session: Session,
+    booking_id: int,
+    *,
+    associate_id: int | None = None,
+) -> Booking:
     """Mark a booking cancelled inside a transaction."""
     try:
+        if associate_id is not None:
+            ensure_booking_owner(session, booking_id, associate_id)
         booking = session.get(Booking, booking_id, with_for_update=True)
         if booking is None:
             raise BookingNotFoundError(booking_id)
@@ -238,10 +269,22 @@ def cancel_booking(session: Session, booking_id: int) -> Booking:
         booking.status = BookingStatus.cancelled
         session.commit()
         session.refresh(booking)
-    except Exception:
+    except Exception as exc:
         session.rollback()
+        logger.warning(
+            "booking.outcome action=cancel booking_id=%s associate_id=%s result=failure error=%s",
+            booking_id,
+            associate_id,
+            type(exc).__name__,
+        )
         raise
     dispatch_booking_notification("booking.cancelled", booking)
+    logger.info(
+        "booking.outcome action=cancel booking_id=%s associate_id=%s room_id=%s result=success",
+        booking.id,
+        booking.associate_id,
+        booking.room_id,
+    )
     return booking
 
 
@@ -250,11 +293,14 @@ def extend_booking(
     booking_id: int,
     *,
     minutes: int,
+    associate_id: int | None = None,
 ) -> Booking:
     """Extend a confirmed booking's end time by minutes, or fail closed on conflict."""
     if minutes <= 0:
         raise ValueError("minutes must be a positive integer")
 
+    if associate_id is not None:
+        ensure_booking_owner(session, booking_id, associate_id)
     booking = session.get(Booking, booking_id)
     if booking is None:
         raise BookingNotFoundError(booking_id)
@@ -263,14 +309,31 @@ def extend_booking(
 
     previous_end_at = as_utc(booking.end_at)
     new_end = previous_end_at + timedelta(minutes=minutes)
-    updated = update_booking_window(
-        session,
-        booking_id,
-        start_at=as_utc(booking.start_at),
-        end_at=new_end,
-    )
-    dispatch_booking_notification(
-        "booking.extended", updated, previous_end_at=previous_end_at
+    try:
+        updated = update_booking_window(
+            session,
+            booking_id,
+            start_at=as_utc(booking.start_at),
+            end_at=new_end,
+        )
+        dispatch_booking_notification(
+            "booking.extended", updated, previous_end_at=previous_end_at
+        )
+    except Exception as exc:
+        logger.warning(
+            "booking.outcome action=extend booking_id=%s associate_id=%s minutes=%s result=failure error=%s",
+            booking_id,
+            associate_id,
+            minutes,
+            type(exc).__name__,
+        )
+        raise
+    logger.info(
+        "booking.outcome action=extend booking_id=%s associate_id=%s room_id=%s minutes=%s result=success",
+        updated.id,
+        updated.associate_id,
+        updated.room_id,
+        minutes,
     )
     return updated
 
