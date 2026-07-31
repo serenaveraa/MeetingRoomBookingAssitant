@@ -17,6 +17,7 @@ def get_engine() -> Engine:
     if _engine is None:
         settings = get_settings()
         url = settings.database_url
+        # Query params (e.g. sslmode=require for RDS) are passed through to psycopg3.
         kwargs: dict = {"future": True}
         if url.startswith("sqlite"):
             kwargs["connect_args"] = {"check_same_thread": False}
