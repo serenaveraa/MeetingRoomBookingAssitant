@@ -309,3 +309,31 @@ def test_openapi_includes_booking_paths(client: TestClient):
     assert "/bookings/{booking_id}/extend" in paths
     assert "/bookings/{booking_id}" in paths
     assert "/health" in paths
+
+
+def test_weekend_booking_and_availability_rejected(client: TestClient):
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    start = datetime(2026, 7, 18, 10, 0, tzinfo=tz).isoformat()  # Saturday
+    end = datetime(2026, 7, 18, 11, 0, tzinfo=tz).isoformat()
+
+    created = client.post(
+        "/bookings",
+        json={
+            "associate_email": "ada@example.com",
+            "associate_name": "Ada",
+            "start_at": start,
+            "end_at": end,
+            "purpose": "Weekend",
+        },
+    )
+    assert created.status_code == 400
+    assert "weekend" in created.json()["detail"].lower()
+
+    availability = client.get(
+        "/bookings/availability",
+        params={"start_at": start, "end_at": end},
+    )
+    assert availability.status_code == 400
+    assert "weekend" in availability.json()["detail"].lower()

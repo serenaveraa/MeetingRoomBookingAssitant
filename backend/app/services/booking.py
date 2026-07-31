@@ -22,6 +22,7 @@ from app.services.errors import (
     MyMeetingNotFoundError,
 )
 from app.services.notification_dispatch import dispatch_booking_notification
+from app.services.schedule import assert_no_weekend_booking
 from app.services.timeutil import as_utc, ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 def _validate_window(start_at: datetime, end_at: datetime) -> None:
     if end_at <= start_at:
         raise InvalidBookingWindowError(start_at, end_at)
+    assert_no_weekend_booking(start_at, end_at)
 
 
 def _overlap_query(

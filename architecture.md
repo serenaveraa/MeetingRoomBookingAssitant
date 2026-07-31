@@ -288,3 +288,7 @@ MeetingRoomBookingAssitant/
 - Full Microsoft Graph calendar sync (Teams is notification-only, separate from Brevo)
 - Using Zapier/Make as the Brevo→Teams bridge for booking events
 - Mobile-native clients
+
+## 10. AWS Free Tier Deployment
+
+For a fully cloud Free Tier deploy (Streamlit on EC2, API on Lambda, Postgres on RDS, reminders on EventBridge), see [`architecture-aws.md`](architecture-aws.md).

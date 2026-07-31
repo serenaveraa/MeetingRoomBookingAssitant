@@ -8,11 +8,22 @@ class BookingServiceError(Exception):
 
 
 class InvalidBookingWindowError(BookingServiceError):
-    def __init__(self, start_at: datetime, end_at: datetime) -> None:
+    def __init__(
+        self,
+        start_at: datetime,
+        end_at: datetime,
+        *,
+        reason: str | None = None,
+    ) -> None:
         self.start_at = start_at
         self.end_at = end_at
+        self.reason = reason
         super().__init__(
-            f"Invalid booking window: end_at ({end_at}) must be after start_at ({start_at})"
+            reason
+            or (
+                f"Invalid booking window: end_at ({end_at}) must be after "
+                f"start_at ({start_at})"
+            )
         )
 
 

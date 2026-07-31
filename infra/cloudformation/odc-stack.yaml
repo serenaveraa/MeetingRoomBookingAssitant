@@ -1,0 +1,598 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  ODC Meeting Room Booking Assistant — AWS Free Tier stack
+  (EC2 Streamlit, Lambda API + reminder, API Gateway HTTP API, RDS Postgres, EventBridge).
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Networking }
+        Parameters: [VpcId, SubnetIds, AllowedSshCidr, KeyName]
+      - Label: { default: Database }
+        Parameters: [DbInstanceIdentifier, DbName, DbUsername, DbPassword]
+      - Label: { default: Lambda image }
+        Parameters: [LambdaImageTag, BootstrapMode]
+      - Label: { default: Application secrets }
+        Parameters:
+          - GroqApiKey
+          - GroqModel
+          - BrevoApiKey
+          - BrevoSenderEmail
+          - BrevoSenderName
+          - BrevoTemplateBookingConfirmed
+          - BrevoTemplateBookingExtended
+          - BrevoTemplateBookingCancelled
+          - BrevoTemplateVacateReminder
+          - BrevoTemplateWaitlistAvailable
+      - Label: { default: App config }
+        Parameters:
+          - OdcTimezone
+          - ReminderLeadMinutes
+          - RepoUrl
+          - RepoBranch
+          - InstanceType
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Default VPC ID (deploy.sh resolves this automatically).
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two subnets in different AZs for the DB subnet group.
+
+  AllowedSshCidr:
+    Type: String
+    Description: CIDR allowed to SSH to the Streamlit EC2 instance (your IP/32).
+    Default: 127.0.0.1/32
+    AllowedPattern: ^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$
+
+  KeyName:
+    Type: String
+    Description: EC2 key pair name for SSH (required when BootstrapMode=false).
+    Default: ""
+
+  DbInstanceIdentifier:
+    Type: String
+    Default: odc-meeting-room
+    AllowedPattern: ^[a-z][a-z0-9-]*$
+
+  DbName:
+    Type: String
+    Default: meeting_room
+    AllowedPattern: ^[a-zA-Z][a-zA-Z0-9_]*$
+
+  DbUsername:
+    Type: String
+    Default: odcadmin
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: ^[a-zA-Z][a-zA-Z0-9]*$
+
+  DbPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+    AllowedPattern: ^[a-zA-Z0-9]*$
+    Description: Alphanumeric only (embedded in DATABASE_URL without encoding).
+
+  LambdaImageTag:
+    Type: String
+    Default: latest
+    Description: Tag of the image already pushed to the stack ECR repo.
+
+  BootstrapMode:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      true = create ECR (+ RDS/SGs/IAM) only so you can push the image first.
+      false = full stack including Lambdas, API Gateway, EventBridge, EC2.
+
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+  GroqModel:
+    Type: String
+    Default: llama-3.3-70b-versatile
+
+  BrevoApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+  BrevoSenderEmail:
+    Type: String
+    Default: ""
+
+  BrevoSenderName:
+    Type: String
+    Default: ODC Meeting Room
+
+  BrevoTemplateBookingConfirmed:
+    Type: String
+    Default: ""
+
+  BrevoTemplateBookingExtended:
+    Type: String
+    Default: ""
+
+  BrevoTemplateBookingCancelled:
+    Type: String
+    Default: ""
+
+  BrevoTemplateVacateReminder:
+    Type: String
+    Default: ""
+
+  BrevoTemplateWaitlistAvailable:
+    Type: String
+    Default: ""
+
+  OdcTimezone:
+    Type: String
+    Default: America/Sao_Paulo
+
+  ReminderLeadMinutes:
+    Type: Number
+    Default: 15
+    MinValue: 1
+    MaxValue: 120
+
+  RepoUrl:
+    Type: String
+    Default: https://github.com/serenaveraa/MeetingRoomBookingAssitant.git
+    Description: Git repo cloned onto EC2 for the Streamlit frontend.
+
+  RepoBranch:
+    Type: String
+    Default: develop
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t2.micro]
+
+Conditions:
+  CreateCompute: !Equals [!Ref BootstrapMode, "false"]
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Security groups
+  # ---------------------------------------------------------------------------
+  Ec2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ODC Streamlit EC2 (port 8501 public, SSH restricted)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8501
+          ToPort: 8501
+          CidrIp: 0.0.0.0/0
+          Description: Streamlit UI
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedSshCidr
+          Description: SSH from operator IP
+      Tags:
+        - Key: Name
+          Value: odc-meeting-ec2-sg
+        - Key: Project
+          Value: odc-meeting
+
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ODC Postgres RDS (public demo access on 5432)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+          Description: Public Lambda/demo access - tighten later
+      Tags:
+        - Key: Name
+          Value: odc-meeting-rds-sg
+        - Key: Project
+          Value: odc-meeting
+
+  # ---------------------------------------------------------------------------
+  # RDS
+  # ---------------------------------------------------------------------------
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: odc-meeting-subnet-group
+      DBSubnetGroupDescription: ODC meeting room Free Tier
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: Name
+          Value: odc-meeting-subnet-group
+        - Key: Project
+          Value: odc-meeting
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Ref DbInstanceIdentifier
+      DBName: !Ref DbName
+      Engine: postgres
+      EngineVersion: "16"
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: "20"
+      StorageType: gp2
+      MasterUsername: !Ref DbUsername
+      MasterUserPassword: !Ref DbPassword
+      VPCSecurityGroups:
+        - !GetAtt RdsSecurityGroup.GroupId
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      PubliclyAccessible: true
+      MultiAZ: false
+      BackupRetentionPeriod: 1
+      AutoMinorVersionUpgrade: true
+      Tags:
+        - Key: Name
+          Value: !Ref DbInstanceIdentifier
+        - Key: Project
+          Value: odc-meeting
+
+  # ---------------------------------------------------------------------------
+  # ECR
+  # ---------------------------------------------------------------------------
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: odc-meeting-api
+      ImageScanningConfiguration:
+        ScanOnPush: false
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: odc-meeting
+
+  # ---------------------------------------------------------------------------
+  # IAM — Lambda
+  # ---------------------------------------------------------------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: odc-meeting-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: Project
+          Value: odc-meeting
+
+  # ---------------------------------------------------------------------------
+  # Lambdas (container image) — only when BootstrapMode=false
+  # ---------------------------------------------------------------------------
+  ApiLambda:
+    Type: AWS::Lambda::Function
+    Condition: CreateCompute
+    DependsOn: DbInstance
+    Properties:
+      FunctionName: odc-meeting-api
+      PackageType: Image
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ImageUri: !Sub
+          "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}:${LambdaImageTag}"
+      ImageConfig:
+        Command:
+          - app.lambda_handlers.api_handler
+      MemorySize: 1024
+      Timeout: 60
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          RUNNING_IN_LAMBDA: "true"
+          DATABASE_URL: !Sub
+            - "postgresql+psycopg://${User}:${Pass}@${Host}:${Port}/${Name}?sslmode=require"
+            - User: !Ref DbUsername
+              Pass: !Ref DbPassword
+              Host: !GetAtt DbInstance.Endpoint.Address
+              Port: !GetAtt DbInstance.Endpoint.Port
+              Name: !Ref DbName
+          ODC_TIMEZONE: !Ref OdcTimezone
+          REMINDER_LEAD_MINUTES: !Ref ReminderLeadMinutes
+          GROQ_API_KEY: !Ref GroqApiKey
+          GROQ_MODEL: !Ref GroqModel
+          BREVO_API_KEY: !Ref BrevoApiKey
+          BREVO_SENDER_EMAIL: !Ref BrevoSenderEmail
+          BREVO_SENDER_NAME: !Ref BrevoSenderName
+          BREVO_TEMPLATE_BOOKING_CONFIRMED: !Ref BrevoTemplateBookingConfirmed
+          BREVO_TEMPLATE_BOOKING_EXTENDED: !Ref BrevoTemplateBookingExtended
+          BREVO_TEMPLATE_BOOKING_CANCELLED: !Ref BrevoTemplateBookingCancelled
+          BREVO_TEMPLATE_VACATE_REMINDER: !Ref BrevoTemplateVacateReminder
+          BREVO_TEMPLATE_WAITLIST_AVAILABLE: !Ref BrevoTemplateWaitlistAvailable
+      Tags:
+        - Key: Project
+          Value: odc-meeting
+
+  ReminderLambda:
+    Type: AWS::Lambda::Function
+    Condition: CreateCompute
+    DependsOn: DbInstance
+    Properties:
+      FunctionName: odc-meeting-reminder
+      PackageType: Image
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ImageUri: !Sub
+          "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}:${LambdaImageTag}"
+      ImageConfig:
+        Command:
+          - app.lambda_handlers.reminder_handler
+      MemorySize: 512
+      Timeout: 30
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          RUNNING_IN_LAMBDA: "true"
+          DATABASE_URL: !Sub
+            - "postgresql+psycopg://${User}:${Pass}@${Host}:${Port}/${Name}?sslmode=require"
+            - User: !Ref DbUsername
+              Pass: !Ref DbPassword
+              Host: !GetAtt DbInstance.Endpoint.Address
+              Port: !GetAtt DbInstance.Endpoint.Port
+              Name: !Ref DbName
+          ODC_TIMEZONE: !Ref OdcTimezone
+          REMINDER_LEAD_MINUTES: !Ref ReminderLeadMinutes
+          GROQ_API_KEY: !Ref GroqApiKey
+          GROQ_MODEL: !Ref GroqModel
+          BREVO_API_KEY: !Ref BrevoApiKey
+          BREVO_SENDER_EMAIL: !Ref BrevoSenderEmail
+          BREVO_SENDER_NAME: !Ref BrevoSenderName
+          BREVO_TEMPLATE_BOOKING_CONFIRMED: !Ref BrevoTemplateBookingConfirmed
+          BREVO_TEMPLATE_BOOKING_EXTENDED: !Ref BrevoTemplateBookingExtended
+          BREVO_TEMPLATE_BOOKING_CANCELLED: !Ref BrevoTemplateBookingCancelled
+          BREVO_TEMPLATE_VACATE_REMINDER: !Ref BrevoTemplateVacateReminder
+          BREVO_TEMPLATE_WAITLIST_AVAILABLE: !Ref BrevoTemplateWaitlistAvailable
+      Tags:
+        - Key: Project
+          Value: odc-meeting
+
+  # ---------------------------------------------------------------------------
+  # API Gateway HTTP API
+  # ---------------------------------------------------------------------------
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Condition: CreateCompute
+    Properties:
+      Name: odc-meeting-http-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - PATCH
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - "*"
+        MaxAge: 86400
+      Tags:
+        Project: odc-meeting
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Condition: CreateCompute
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiLambda.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 30000
+
+  ApiDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: CreateCompute
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: $default
+      Target: !Sub integrations/${ApiIntegration}
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Condition: CreateCompute
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+      Tags:
+        Project: odc-meeting
+
+  ApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: CreateCompute
+    Properties:
+      FunctionName: !Ref ApiLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
+
+  # ---------------------------------------------------------------------------
+  # EventBridge → reminder Lambda
+  # ---------------------------------------------------------------------------
+  ReminderScheduleRule:
+    Type: AWS::Events::Rule
+    Condition: CreateCompute
+    Properties:
+      Name: odc-meeting-vacate-reminder
+      Description: Run vacate-reminder Lambda every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: ReminderLambdaTarget
+          Arn: !GetAtt ReminderLambda.Arn
+
+  ReminderLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: CreateCompute
+    Properties:
+      FunctionName: !Ref ReminderLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ReminderScheduleRule.Arn
+
+  # ---------------------------------------------------------------------------
+  # EC2 Streamlit
+  # ---------------------------------------------------------------------------
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Condition: CreateCompute
+    DependsOn:
+      - ApiStage
+      - DbInstance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref AWS::NoValue]
+      SecurityGroupIds:
+        - !GetAtt Ec2SecurityGroup.GroupId
+      SubnetId: !Select [0, !Ref SubnetIds]
+      Tags:
+        - Key: Name
+          Value: odc-meeting-streamlit
+        - Key: Project
+          Value: odc-meeting
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euxo pipefail
+            exec > >(tee /var/log/odc-userdata.log) 2>&1
+
+            dnf update -y
+            dnf install -y git python3.11 python3.11-pip python3.11-devel gcc
+
+            APP_ROOT=/opt/odc-meeting
+            mkdir -p "$APP_ROOT"
+            if [ ! -d "$APP_ROOT/repo/.git" ]; then
+              git clone --depth 1 --branch "${RepoBranch}" "${RepoUrl}" "$APP_ROOT/repo"
+            else
+              cd "$APP_ROOT/repo" && git fetch origin "${RepoBranch}" && git checkout "${RepoBranch}" && git pull --ff-only
+            fi
+
+            cd "$APP_ROOT/repo/frontend"
+            python3.11 -m venv "$APP_ROOT/venv"
+            "$APP_ROOT/venv/bin/pip" install --upgrade pip
+            "$APP_ROOT/venv/bin/pip" install -r requirements.txt
+
+            cat > /etc/systemd/system/odc-streamlit.service <<EOF
+            [Unit]
+            Description=ODC Meeting Room Streamlit UI
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=ec2-user
+            WorkingDirectory=$APP_ROOT/repo/frontend
+            Environment=API_BASE_URL=${ApiBaseUrl}
+            Environment=ODC_TIMEZONE=${OdcTimezone}
+            ExecStart=$APP_ROOT/venv/bin/streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --browser.gatherUsageStats false
+            Restart=always
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            chown -R ec2-user:ec2-user "$APP_ROOT"
+            systemctl daemon-reload
+            systemctl enable --now odc-streamlit.service
+          - ApiBaseUrl: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+            RepoUrl: !Ref RepoUrl
+            RepoBranch: !Ref RepoBranch
+            OdcTimezone: !Ref OdcTimezone
+
+Outputs:
+  ApiUrl:
+    Condition: CreateCompute
+    Description: HTTP API base URL for Streamlit API_BASE_URL
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+
+  StreamlitUrl:
+    Condition: CreateCompute
+    Description: Public Streamlit UI
+    Value: !Sub "http://${Ec2Instance.PublicIp}:8501"
+    Export:
+      Name: !Sub "${AWS::StackName}-StreamlitUrl"
+
+  Ec2PublicIp:
+    Condition: CreateCompute
+    Description: EC2 public IPv4
+    Value: !GetAtt Ec2Instance.PublicIp
+
+  RdsEndpoint:
+    Description: RDS hostname
+    Value: !GetAtt DbInstance.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-RdsEndpoint"
+
+  RdsPort:
+    Description: RDS port
+    Value: !GetAtt DbInstance.Endpoint.Port
+
+  EcrUri:
+    Description: ECR repository URI (without tag)
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}"
+    Export:
+      Name: !Sub "${AWS::StackName}-EcrUri"
+
+  EcrRepositoryName:
+    Description: ECR repository name
+    Value: !Ref EcrRepository
+
+  DatabaseUrlHint:
+    Description: Host/db only — full DATABASE_URL with password is written to infra/local.env by deploy.sh
+    Value: !Sub
+      - "postgresql+psycopg://${User}@${Host}:${Port}/${Name}?sslmode=require"
+      - User: !Ref DbUsername
+        Host: !GetAtt DbInstance.Endpoint.Address
+        Port: !GetAtt DbInstance.Endpoint.Port
+        Name: !Ref DbName
+
+  BootstrapMode:
+    Description: Current BootstrapMode parameter
+    Value: !Ref BootstrapMode
+
+  StackRegion:
+    Value: !Ref AWS::Region

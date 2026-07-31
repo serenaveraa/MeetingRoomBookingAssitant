@@ -43,6 +43,17 @@ def _today_odc() -> date:
     return datetime.now(get_odc_tz()).date()
 
 
+def _is_weekend(day: date) -> bool:
+    return day.weekday() >= 5
+
+
+def _next_weekday(day: date) -> date:
+    candidate = day
+    while _is_weekend(candidate):
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def _identity_ready() -> bool:
     return bool(
         st.session_state.associate_name.strip()
@@ -79,8 +90,8 @@ with st.sidebar:
     st.header("Calendar day")
     selected_day = st.date_input(
         "Day",
-        value=_today_odc(),
-        help=f"Times shown in {ODC_TIMEZONE}",
+        value=_next_weekday(_today_odc()),
+        help=f"Weekdays only — times shown in {ODC_TIMEZONE}",
     )
     refresh = st.button("Refresh calendar", use_container_width=True)
     st.caption(f"API: `{get_api_base_url()}`")
@@ -101,37 +112,44 @@ calendar_tab, insights_tab, chat_tab = st.tabs(["Calendar", "Insights", "Chat"])
 
 with calendar_tab:
     st.caption(
-        "Day occupancy — confirmed bookings and free gaps (business hours 08:00–18:00)."
+        "Day occupancy — confirmed bookings and free gaps "
+        "(weekdays only, business hours 08:00–18:00)."
     )
-    day_start, day_end = local_day_bounds(selected_day)
-    try:
-        _ = refresh  # noqa: F841
-        bookings = list_bookings(day_start, day_end, status="confirmed")
-    except ApiError as exc:
-        st.error(str(exc))
+    if _is_weekend(selected_day):
+        st.warning(
+            "The meeting room cannot be scheduled on weekends. "
+            "Pick a Monday–Friday date to view the calendar."
+        )
     else:
-        segments = build_day_segments(bookings, selected_day)
-        fig = build_timeline_figure(segments, selected_day)
-        st.plotly_chart(fig, use_container_width=True)
-
-        gaps = free_gaps(segments)
-        st.subheader("Free gaps")
-        if not gaps:
-            st.info("No free gaps within business hours for this day.")
+        day_start, day_end = local_day_bounds(selected_day)
+        try:
+            _ = refresh  # noqa: F841
+            bookings = list_bookings(day_start, day_end, status="confirmed")
+        except ApiError as exc:
+            st.error(str(exc))
         else:
-            for gap in gaps:
-                st.markdown(
-                    f"- **{gap.start_local.strftime('%H:%M')}–"
-                    f"{gap.end_local.strftime('%H:%M')}** "
-                    f"({int((gap.end_local - gap.start_local).total_seconds() // 60)} min)"
-                )
+            segments = build_day_segments(bookings, selected_day)
+            fig = build_timeline_figure(segments, selected_day)
+            st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Confirmed bookings")
-        table = busy_bookings_table(segments)
-        if table.empty:
-            st.write("No confirmed bookings in business hours for this day.")
-        else:
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            gaps = free_gaps(segments)
+            st.subheader("Free gaps")
+            if not gaps:
+                st.info("No free gaps within business hours for this day.")
+            else:
+                for gap in gaps:
+                    st.markdown(
+                        f"- **{gap.start_local.strftime('%H:%M')}–"
+                        f"{gap.end_local.strftime('%H:%M')}** "
+                        f"({int((gap.end_local - gap.start_local).total_seconds() // 60)} min)"
+                    )
+
+            st.subheader("Confirmed bookings")
+            table = busy_bookings_table(segments)
+            if table.empty:
+                st.write("No confirmed bookings in business hours for this day.")
+            else:
+                st.dataframe(table, use_container_width=True, hide_index=True)
 
 with insights_tab:
     st.caption("Utilization metrics over a date range using the shared backend service.")

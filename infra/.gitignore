@@ -1,0 +1,7 @@
+# AWS deploy local outputs / secrets (never commit)
+local.env
+outputs.json
+parameters.json
+*.pem
+lambda-package/
+.deploy/

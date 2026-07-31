@@ -3,7 +3,7 @@ from collections.abc import Generator
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from app.config import get_settings
 from app.models import Base, ODC_COMMON_ROOM_NAME, Room
@@ -24,6 +24,12 @@ def get_engine() -> Engine:
             # Keep a single shared in-memory DB across connections (tests).
             if ":memory:" in url:
                 kwargs["poolclass"] = StaticPool
+            elif settings.running_in_lambda:
+                kwargs["poolclass"] = NullPool
+        elif settings.running_in_lambda:
+            # Short-lived connections per checkout; avoid pooling across invokes
+            # without RDS Proxy (not used on Free Tier).
+            kwargs["poolclass"] = NullPool
         _engine = create_engine(url, **kwargs)
         _SessionLocal = sessionmaker(
             bind=_engine,

@@ -139,3 +139,15 @@ def test_invalid_window_raises():
             check_availability(session, start, start)
         with pytest.raises(InvalidBookingWindowError):
             suggest_alternatives(session, start, start - timedelta(hours=1))
+
+
+def test_weekend_availability_raises():
+    from zoneinfo import ZoneInfo
+
+    saturday = datetime(2026, 7, 18, 10, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    sunday_end = datetime(2026, 7, 18, 11, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    with get_session_factory()() as session:
+        with pytest.raises(InvalidBookingWindowError, match="weekends"):
+            check_availability(session, saturday, sunday_end)
+        with pytest.raises(InvalidBookingWindowError, match="weekends"):
+            suggest_alternatives(session, saturday, sunday_end)

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import Booking, BookingStatus
 from app.services.booking import find_conflicts, get_odc_room
 from app.services.errors import InvalidBookingWindowError
+from app.services.schedule import assert_no_weekend_booking
 from app.services.timeutil import as_utc, ensure_utc, get_odc_tz
 
 BUSINESS_DAY_START = time(8, 0)
@@ -55,6 +56,7 @@ def check_availability(
     end_utc = ensure_utc(end_at)
     if end_utc <= start_utc:
         raise InvalidBookingWindowError(start_utc, end_utc)
+    assert_no_weekend_booking(start_utc, end_utc)
 
     resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
     conflicts = find_conflicts(session, resolved_room_id, start_utc, end_utc)
@@ -120,6 +122,7 @@ def suggest_alternatives(
     end_utc = ensure_utc(end_at)
     if end_utc <= start_utc:
         raise InvalidBookingWindowError(start_utc, end_utc)
+    assert_no_weekend_booking(start_utc, end_utc)
 
     duration = end_utc - start_utc
     resolved_room_id = room_id if room_id is not None else get_odc_room(session).id

@@ -2,81 +2,56 @@
 
 AI Agent Case Study: ODC Meeting Room Booking Assistant
 
+## Live AWS environment (Free Tier)
+
+Region **`us-east-2`**, CloudFormation stack **`odc-meeting`**.
+
+| What | URL |
+|---|---|
+| **Streamlit UI** | http://3.143.23.153:8501 |
+| **API (HTTP API Gateway)** | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com |
+| **Health** | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com/health |
+
+RDS host: `odc-meeting-room.cfc04mss8inc.us-east-2.rds.amazonaws.com` (credentials in gitignored `infra/local.env`).
+
+Anyone can open the Streamlit link in a browser — no local install required. The EC2 public IP can change if the instance is replaced; refresh URLs from stack outputs or `infra/local.env` after redeploy.
+
+Deploy / update / tear-down: [`infra/README.md`](infra/README.md). Architecture: [`architecture-aws.md`](architecture-aws.md).
+
+**Schedule rule:** the room can only be booked **Monday–Friday** (ODC local time). Weekends are rejected by the API, agent tools, and UI.
+
 ## Prerequisites
 
 - Python 3.11+
-- **Docker Desktop** (required for **local** development — Postgres runs in Docker)
-- **AWS CLI** (only for cloud RDS provisioning — see [`infra/README.md`](infra/README.md))
+- **Docker Desktop** (optional — for local Postgres or building the Lambda image)
+- **AWS CLI** (for cloud deploy / RDS provisioning — see [`infra/README.md`](infra/README.md))
 
-## Cloud database (AWS RDS)
+## 1. Database
 
-AWS environments use **RDS PostgreSQL only** — not Docker Postgres. Local `docker-compose.yml` is unchanged.
+### AWS RDS (preferred)
 
-| Setting | Value |
-|---|---|
-| Region | `sa-east-1` (default) |
-| Instance | `odc-mrba-postgres` |
-| Secret | `odc-mrba/DATABASE_URL` (Secrets Manager) |
+After CloudFormation (`infra/scripts/deploy.sh`), use the URL in gitignored [`infra/local.env`](infra/local.env) as `DATABASE_URL` in `.env`. Include `?sslmode=require`.
 
-Provision, initialize schema, and verify:
+Alternative shell provisioner (issue #43, Secrets Manager `odc-mrba/DATABASE_URL`):
 
 ```bash
-cp infra/config.env.example infra/config.env   # set ADMIN_CIDR, optional LAMBDA_SECURITY_GROUP_ID
+cp infra/config.env.example infra/config.env
 chmod +x infra/*.sh
 ./infra/provision-rds.sh
 ./infra/init-rds-db.sh
 ./infra/verify-rds.sh
 ```
 
-See [`infra/README.md`](infra/README.md) for re-provisioning, password rotation, and Lambda SG wiring.
-
-## 1. Start the database (Docker Postgres — local only)
+### Optional: Docker Postgres (offline only)
 
 ```bash
 docker compose up -d db
-docker compose ps
+# DATABASE_URL=postgresql+psycopg://odc:odc@localhost:5432/meeting_room
 ```
 
-Wait until the `db` service shows **healthy**.
+On startup, Postgres initialization enables `btree_gist` and installs the confirmed-booking overlap exclusion constraint. Raw migrations live under `backend/migrations/`. SQLite is used only in unit tests.
 
-| Setting | Value |
-|---|---|
-| URL | `postgresql+psycopg://odc:odc@localhost:5432/meeting_room` |
-| User / password | `odc` / `odc` |
-| Database | `meeting_room` |
-| Port | `5432` |
-
-Optional: copy [`.env.example`](.env.example) to `.env` at the repo root (defaults already match Docker).
-
-The backend uses `DATABASE_URL` as the single source of truth for database selection. For Postgres, the default value is:
-
-```text
-postgresql+psycopg://odc:odc@localhost:5432/meeting_room
-```
-
-On startup, Postgres initialization enables `btree_gist` and installs the confirmed-booking overlap exclusion constraint. To apply the same schema explicitly during a deployment, run the raw migration scripts in order:
-
-```bash
-docker compose exec -T db psql -U odc -d meeting_room < backend/migrations/001_add_vacate_reminder_claim.sql
-docker compose exec -T db psql -U odc -d meeting_room < backend/migrations/002_add_waitlist_room.sql
-docker compose exec -T db psql -U odc -d meeting_room < backend/migrations/003_add_booking_overlap_exclusion.sql
-```
-
-The exclusion constraint requires the PostgreSQL `btree_gist` extension. It applies only to `confirmed` bookings and treats time windows as half-open intervals `[start_at, end_at)`, so adjacent bookings are allowed. SQLite has no equivalent exclusion constraint; it continues to use the booking service's transactional application-level overlap check.
-
-Inspect tables after the API has started once:
-
-```bash
-docker compose exec db psql -U odc -d meeting_room -c "SELECT id, name FROM rooms;"
-```
-
-Stop containers (keeps volume data unless you add `-v`):
-
-```bash
-docker compose down
-```
-
-## 2. Backend (uses Docker Postgres)
+## 2. Backend (uses `DATABASE_URL` — RDS or Docker)
 
 ```bash
 cd backend
@@ -111,7 +86,7 @@ CI starts PostgreSQL 16 and sets `DATABASE_URL` before running the complete comm
 
 ## 3. Frontend (Streamlit calendar)
 
-Requires the backend API running (step 2). Use a **frontend venv** so Streamlit deps do not clash with other global packages.
+Requires the backend API running (step 2), **or** set `API_BASE_URL` to the live API Gateway URL above. Use a **frontend venv** so Streamlit deps do not clash with other global packages.
 
 ```bash
 cd frontend
@@ -122,11 +97,23 @@ set API_BASE_URL=http://127.0.0.1:8000
 .venv/Scripts/python.exe -m streamlit run app.py
 ```
 
-The calendar day view loads confirmed bookings from `GET /bookings`, shows free gaps within business hours (08:00–18:00 ODC time), and stores associate name/email in the Streamlit session (sidebar). The **Chat** tab talks to `POST /agent/chat` with that identity and keeps conversation history in the session.
+The calendar day view loads confirmed bookings from `GET /bookings`, shows free gaps within business hours (08:00–18:00 ODC time) on **weekdays only**, and stores associate name/email in the Streamlit session (sidebar). The **Chat** tab talks to `POST /agent/chat` with that identity and keeps conversation history in the session.
 
 ## Configuration
 
-See [`.env.example`](.env.example) for all variables. Architecture: [`architecture.md`](architecture.md).
+See [`.env.example`](.env.example) for all variables. Architecture: [`architecture.md`](architecture.md). Fully cloud AWS Free Tier deployment (EC2 Streamlit + Lambda API + RDS): [`architecture-aws.md`](architecture-aws.md).
+
+### Deploy to AWS (CloudFormation)
+
+Free Tier stack (EC2 + Lambda/API Gateway + RDS + EventBridge): see [`infra/README.md`](infra/README.md) and [`infra/cloudformation/odc-stack.yaml`](infra/cloudformation/odc-stack.yaml).
+
+```bash
+BootstrapMode=true ./infra/scripts/deploy.sh
+./infra/scripts/build_and_push.sh
+./infra/scripts/deploy.sh
+```
+
+Lambda handlers (no deploy required to unit-test): `app.lambda_handlers.api_handler` and `app.lambda_handlers.reminder_handler`. Set `RUNNING_IN_LAMBDA=true` on AWS so APScheduler stays off and DB uses short-lived connections. Locally keep it false and run `uvicorn` as usual.
 
 - `API_BASE_URL` — FastAPI base URL for the Streamlit UI (default `http://127.0.0.1:8000`)
 - For the LangGraph agent (live LLM calls), set `GROQ_API_KEY` (recommended free tier), or `OPENAI_API_KEY`, or Azure OpenAI vars (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`). Unit tests mock the model and do not call the network.

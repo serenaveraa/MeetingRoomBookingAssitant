@@ -11,13 +11,18 @@ from app.scheduler import create_scheduler
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    settings = get_settings()
     init_db()
-    scheduler = create_scheduler(get_settings())
-    scheduler.start()
+    scheduler = None
+    # Vacate reminders run via EventBridge → reminder Lambda in AWS.
+    if not settings.running_in_lambda:
+        scheduler = create_scheduler(settings)
+        scheduler.start()
     try:
         yield
     finally:
-        scheduler.shutdown(wait=False)
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
 
 
 app = FastAPI(

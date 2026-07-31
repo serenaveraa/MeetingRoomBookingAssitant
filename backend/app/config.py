@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     reminder_lead_minutes: int = 15
     reminder_poll_interval_seconds: int = 60
     reminder_back_to_back_tolerance_minutes: int = 2
+    # When true (Lambda), skip in-process APScheduler and use NullPool DB connections.
+    running_in_lambda: bool = False
 
     openai_api_key: str = ""
     groq_api_key: str = ""

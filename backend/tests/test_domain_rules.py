@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -7,7 +7,7 @@ from app.db import get_session_factory, init_db, reset_engine
 from app.models import BookingStatus, Room
 from app.scheduler.vacate_reminders import candidate_bookings
 from app.services import BookingConflictError, create_booking, update_booking_window
-from app.services.availability import suggest_alternatives
+from app.services.availability import check_availability, suggest_alternatives
 from tests.factories import at, make_associate, make_booking
 
 
@@ -170,3 +170,72 @@ def test_vacate_eligibility_requires_next_booking_and_unreminded_state(settings)
         assert adjacent.id in candidate_ids
         assert gapped.id not in candidate_ids
         assert reminded.id not in candidate_ids
+
+
+def test_weekend_booking_is_rejected():
+    from zoneinfo import ZoneInfo
+
+    from app.services.errors import InvalidBookingWindowError
+    from app.services.schedule import WEEKEND_BOOKING_MESSAGE
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    saturday_start = datetime(2026, 7, 18, 10, 0, tzinfo=tz)  # Saturday
+    saturday_end = datetime(2026, 7, 18, 11, 0, tzinfo=tz)
+
+    with get_session_factory()() as session:
+        associate = make_associate(session)
+        room = session.query(Room).one()
+        with pytest.raises(InvalidBookingWindowError, match="weekends") as exc_info:
+            create_booking(
+                session,
+                associate_id=associate.id,
+                room_id=room.id,
+                start_at=saturday_start,
+                end_at=saturday_end,
+                purpose="Weekend planning",
+            )
+        assert str(exc_info.value) == WEEKEND_BOOKING_MESSAGE
+
+
+def test_weekday_booking_still_allowed():
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    friday_start = datetime(2026, 7, 17, 10, 0, tzinfo=tz)  # Friday
+    friday_end = datetime(2026, 7, 17, 11, 0, tzinfo=tz)
+
+    with get_session_factory()() as session:
+        associate = make_associate(session)
+        room = session.query(Room).one()
+        booking = create_booking(
+            session,
+            associate_id=associate.id,
+            room_id=room.id,
+            start_at=friday_start,
+            end_at=friday_end,
+            purpose="Friday sync",
+        )
+        assert booking.id > 0
+
+
+def test_window_spanning_into_saturday_is_rejected():
+    from zoneinfo import ZoneInfo
+
+    from app.services.errors import InvalidBookingWindowError
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    # Friday evening into Saturday morning (local)
+    start = datetime(2026, 7, 17, 22, 0, tzinfo=tz)
+    end = datetime(2026, 7, 18, 1, 0, tzinfo=tz)
+
+    with get_session_factory()() as session:
+        associate = make_associate(session)
+        room = session.query(Room).one()
+        with pytest.raises(InvalidBookingWindowError, match="weekends"):
+            create_booking(
+                session,
+                associate_id=associate.id,
+                room_id=room.id,
+                start_at=start,
+                end_at=end,
+            )

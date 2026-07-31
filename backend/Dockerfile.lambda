@@ -1,0 +1,17 @@
+# Lambda container image for API + vacate-reminder handlers.
+# Build from repo root:
+#   docker build -f backend/Dockerfile.lambda -t odc-meeting-api:latest .
+FROM public.ecr.aws/lambda/python:3.11
+
+COPY backend/requirements-lambda.txt ${LAMBDA_TASK_ROOT}/requirements-lambda.txt
+
+# Upgrade pip; force binary wheels where available (tiktoken needs this under linux/amd64).
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir --only-binary=:all: -r ${LAMBDA_TASK_ROOT}/requirements-lambda.txt \
+    || pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements-lambda.txt
+
+COPY backend/app ${LAMBDA_TASK_ROOT}/app
+COPY backend/migrations ${LAMBDA_TASK_ROOT}/migrations
+
+# Overridden per function via ImageConfig.Command in CloudFormation.
+CMD ["app.lambda_handlers.api_handler"]

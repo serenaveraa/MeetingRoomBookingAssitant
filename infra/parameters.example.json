@@ -1,0 +1,20 @@
+{
+  "KeyName": "your-ec2-keypair-name",
+  "AllowedSshCidr": "203.0.113.10/32",
+  "DbPassword": "ChangeMeAlphanumericOnly1",
+  "GroqApiKey": "",
+  "GroqModel": "llama-3.3-70b-versatile",
+  "BrevoApiKey": "",
+  "BrevoSenderEmail": "",
+  "BrevoSenderName": "ODC Meeting Room",
+  "BrevoTemplateBookingConfirmed": "",
+  "BrevoTemplateBookingExtended": "",
+  "BrevoTemplateBookingCancelled": "",
+  "BrevoTemplateVacateReminder": "",
+  "BrevoTemplateWaitlistAvailable": "",
+  "OdcTimezone": "America/Sao_Paulo",
+  "ReminderLeadMinutes": "15",
+  "RepoUrl": "https://github.com/serenaveraa/MeetingRoomBookingAssitant.git",
+  "RepoBranch": "develop",
+  "InstanceType": "t3.micro"
+}

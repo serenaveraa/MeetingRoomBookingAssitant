@@ -10,6 +10,12 @@ __pycache__/
 .env
 infra/config.env
 *.db
+infra/local.env
+infra/outputs.json
+infra/parameters.json
+infra/*.pem
+infra/lambda-package/
+infra/.deploy/
 
 # IDE / OS
 .idea/

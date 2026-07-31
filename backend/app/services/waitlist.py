@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models import Booking, BookingStatus, WaitlistEntry
 from app.notifications import NotificationService
 from app.services.errors import InvalidBookingWindowError
+from app.services.schedule import assert_no_weekend_booking
 from app.services.timeutil import ensure_utc
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def create_waitlist_entry(
     end_utc = ensure_utc(desired_end)
     if end_utc <= start_utc:
         raise InvalidBookingWindowError(start_utc, end_utc)
+    assert_no_weekend_booking(start_utc, end_utc)
     occupied = session.scalar(
         select(Booking.id).where(
             Booking.room_id == room_id,
