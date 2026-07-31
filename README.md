@@ -5,9 +5,32 @@ AI Agent Case Study: ODC Meeting Room Booking Assistant
 ## Prerequisites
 
 - Python 3.11+
-- **Docker Desktop** (required — the app database is Postgres in Docker)
+- **Docker Desktop** (required for **local** development — Postgres runs in Docker)
+- **AWS CLI** (only for cloud RDS provisioning — see [`infra/README.md`](infra/README.md))
 
-## 1. Start the database (Docker Postgres)
+## Cloud database (AWS RDS)
+
+AWS environments use **RDS PostgreSQL only** — not Docker Postgres. Local `docker-compose.yml` is unchanged.
+
+| Setting | Value |
+|---|---|
+| Region | `sa-east-1` (default) |
+| Instance | `odc-mrba-postgres` |
+| Secret | `odc-mrba/DATABASE_URL` (Secrets Manager) |
+
+Provision, initialize schema, and verify:
+
+```bash
+cp infra/config.env.example infra/config.env   # set ADMIN_CIDR, optional LAMBDA_SECURITY_GROUP_ID
+chmod +x infra/*.sh
+./infra/provision-rds.sh
+./infra/init-rds-db.sh
+./infra/verify-rds.sh
+```
+
+See [`infra/README.md`](infra/README.md) for re-provisioning, password rotation, and Lambda SG wiring.
+
+## 1. Start the database (Docker Postgres — local only)
 
 ```bash
 docker compose up -d db

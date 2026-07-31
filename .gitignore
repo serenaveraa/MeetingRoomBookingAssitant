@@ -8,6 +8,7 @@ __pycache__/
 
 # Env & local DB
 .env
+infra/config.env
 *.db
 
 # IDE / OS
