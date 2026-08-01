@@ -35,6 +35,11 @@ User=ec2-user
 WorkingDirectory=$APP_ROOT/repo/frontend
 Environment=API_BASE_URL=${ApiBaseUrl}
 Environment=ODC_TIMEZONE=${OdcTimezone}
+# Arrow's bundled mimalloc segfaults in mi_thread_init on this AMI when it first
+# allocates from a new thread, and Streamlit runs every rerun on a fresh thread —
+# that took the whole server down mid-click. The system allocator avoids that code
+# path; these payloads are tiny either way.
+Environment=ARROW_DEFAULT_MEMORY_POOL=system
 # User-data only runs at first boot, so refresh the checkout here to make a service
 # restart enough to pick up a new commit. The leading "-" keeps a network blip or a
 # bad fetch from blocking the UI from starting.

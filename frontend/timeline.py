@@ -9,12 +9,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-# pandas 3 builds strings on pyarrow by default, which segfaults libarrow 25 on the
-# deployed EC2 box as soon as a DataFrame is created from a second script-runner
-# thread — that kills the whole Streamlit process on every rerun. Python-backed
-# strings sidestep the crash; the tables here are far too small for it to cost us.
-pd.options.mode.string_storage = "python"
-
 ODC_TIMEZONE = "America/Sao_Paulo"
 BUSINESS_DAY_START = time(8, 0)
 BUSINESS_DAY_END = time(18, 0)
