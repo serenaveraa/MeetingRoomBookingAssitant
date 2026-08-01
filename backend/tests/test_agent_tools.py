@@ -5,8 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.agent.entities import EntityResolutionError, resolve_booking_window
+from app.agent.entities import (
+    EntityResolutionError,
+    resolve_booking_window,
+    resolve_day,
+)
 from app.agent.graph import apply_clarification_guard, invoke_agent
+from app.agent.prompts import build_system_prompt
 from app.agent.schema import AgentDecision, ExtractedEntities, Intent
 from app.agent.tools import (
     CreateBookingArgs,
@@ -14,6 +19,7 @@ from app.agent.tools import (
     ListMyBookingsArgs,
     SuggestAlternativesArgs,
     ToolContext,
+    ToolResult,
     UtilizationArgs,
     WindowArgs,
     compose_reply,
@@ -32,6 +38,7 @@ from app.services.errors import (
     InvalidBookingWindowError,
     MyMeetingNotFoundError,
 )
+from app.services.timeutil import get_odc_tz
 from app.services.utilization import UtilizationSummary
 
 
@@ -93,6 +100,45 @@ def test_resolve_booking_window_duration_and_relative_day():
         today=date(2026, 7, 16),
     )
     assert (end - start).total_seconds() == 30 * 60
+
+
+def test_resolve_day_month_names_and_weekday_phrases():
+    saturday = date(2026, 8, 1)
+    assert resolve_day("august 3rd", today=saturday) == date(2026, 8, 3)
+    assert resolve_day("on August 3, 2026", today=saturday) == date(2026, 8, 3)
+    assert resolve_day("3 of august", today=saturday) == date(2026, 8, 3)
+    assert resolve_day("next Monday", today=saturday) == date(2026, 8, 3)
+    assert resolve_day("friday", today=saturday) == date(2026, 8, 7)
+    assert resolve_day("in 3 days", today=saturday) == date(2026, 8, 4)
+    assert resolve_day("day after tomorrow", today=saturday) == date(2026, 8, 3)
+    assert resolve_day("Saturday, August 8th", today=saturday) == date(2026, 8, 8)
+    assert resolve_day("Monday august 3", today=saturday) == date(2026, 8, 3)
+
+
+def test_resolve_day_rolls_month_without_year_forward():
+    assert resolve_day("january 5", today=date(2026, 8, 1)) == date(2027, 1, 5)
+
+
+def test_resolve_day_rejects_unknown_phrase():
+    with pytest.raises(EntityResolutionError):
+        resolve_day("whenever you like", today=date(2026, 8, 1))
+
+
+def test_resolve_booking_window_corrects_stale_model_year():
+    # A Monday the model mislabelled with its training year (2025-08-03 was a Sunday).
+    start, _ = resolve_booking_window(
+        ExtractedEntities(date="2025-08-03", start_time="2 PM", end_time="3 PM"),
+        today=date(2026, 8, 1),
+    )
+    assert start.astimezone(get_odc_tz()).date() == date(2026, 8, 3)
+
+
+def test_resolve_booking_window_keeps_explicitly_named_year():
+    start, _ = resolve_booking_window(
+        ExtractedEntities(date="august 3 2025", start_time="2 PM", end_time="3 PM"),
+        today=date(2026, 8, 1),
+    )
+    assert start.astimezone(get_odc_tz()).date() == date(2025, 8, 3)
 
 
 def test_resolve_booking_window_requires_start():
@@ -300,6 +346,30 @@ def test_run_tools_book_conflict_triggers_alternatives():
     reply = compose_reply(decision, results)
     assert "isn't available" in reply.lower() or "not available" in reply.lower()
     assert "alternative" in reply.lower()
+
+
+def test_compose_reply_weekend_rejection_is_not_framed_as_conflict():
+    from app.services.schedule import WEEKEND_BOOKING_MESSAGE
+
+    results = [
+        ToolResult(
+            tool="create_booking",
+            ok=False,
+            error=WEEKEND_BOOKING_MESSAGE,
+            error_type="InvalidBookingWindowError",
+        )
+    ]
+    reply = compose_reply(_decision(), results)
+    assert reply == WEEKEND_BOOKING_MESSAGE
+    assert "isn't available" not in reply
+
+
+def test_system_prompt_states_today_in_odc_timezone():
+    prompt = build_system_prompt(
+        odc_timezone="America/Sao_Paulo", today=date(2026, 8, 1)
+    )
+    assert "2026-08-01" in prompt
+    assert "Saturday" in prompt
 
 
 def test_run_tools_skips_when_clarification_needed():

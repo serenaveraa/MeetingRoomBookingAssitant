@@ -16,7 +16,7 @@ def format_tool_outcomes(tool_results: list[dict[str, Any]]) -> list[str]:
                 f"Booking confirmed — #{data.get('id')} "
                 f"{data.get('start_at', '')} -> {data.get('end_at', '')}"
             )
-        else:
+        elif create.get("error_type") == "BookingConflictError":
             lines.append(
                 f"Booking conflict — {create.get('error') or 'slot unavailable'}"
             )
@@ -31,6 +31,10 @@ def format_tool_outcomes(tool_results: list[dict[str, Any]]) -> list[str]:
                         )
                 else:
                     lines.append("No same-duration free slots found today.")
+        else:
+            lines.append(
+                f"Booking not created — {create.get('error') or 'request rejected'}"
+            )
 
     extend = by_name.get("extend_booking")
     if extend:

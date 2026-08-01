@@ -533,6 +533,11 @@ def run_tools_for_intent(
     return results
 
 
+# Errors caused by the request itself (bad window / unparseable date), where the
+# error text is already the best user-facing explanation.
+_REQUEST_ERROR_TYPES = {"InvalidBookingWindowError", "EntityResolutionError"}
+
+
 def compose_reply(decision: AgentDecision, results: list[ToolResult]) -> str:
     """Deterministic user-facing message from tool outcomes."""
     if decision.needs_clarification:
@@ -548,6 +553,8 @@ def compose_reply(decision: AgentDecision, results: list[ToolResult]) -> str:
 
     if primary.tool == "check_availability":
         if not primary.ok:
+            if primary.error_type in _REQUEST_ERROR_TYPES:
+                return primary.error or "I couldn't read that date and time."
             return f"I couldn't check availability: {primary.error}"
         if primary.data.get("available"):
             return (
@@ -565,6 +572,8 @@ def compose_reply(decision: AgentDecision, results: list[ToolResult]) -> str:
                 f"Booked the room from {primary.data['start_at']} "
                 f"to {primary.data['end_at']} (booking #{primary.data['id']})."
             )
+        if primary.error_type in _REQUEST_ERROR_TYPES:
+            return primary.error or "I couldn't read that date and time."
         alts = by_name.get("suggest_alternatives")
         lines = [f"That slot isn't available: {primary.error}"]
         if alts and alts.ok and alts.data.get("alternatives"):
