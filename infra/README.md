@@ -66,6 +66,39 @@ via env vars (`DB_PASSWORD`, `GROQ_API_KEY`, `KEY_NAME`, `ALLOWED_SSH_CIDR`, …
 
 `DbPassword` must be **alphanumeric only** (it is embedded in `DATABASE_URL`).
 
+### Brevo transactional templates (required for email)
+
+The Lambdas send mail via Brevo **template IDs**, not free-form HTML. If
+`BrevoTemplateBookingConfirmed` (and the other four) are empty, bookings still
+succeed but every email fails with `Missing Brevo template ID` in CloudWatch.
+
+With `BrevoApiKey` + `BrevoSenderEmail` set in `parameters.json` (or `.env`):
+
+```bash
+python infra/scripts/create_brevo_templates.py
+# → writes infra/.deploy/brevo_templates.json and prints IDs
+```
+
+Paste the IDs into `infra/parameters.json`:
+
+| Parameter | Event |
+|---|---|
+| `BrevoTemplateBookingConfirmed` | `booking.confirmed` |
+| `BrevoTemplateBookingExtended` | `booking.extended` |
+| `BrevoTemplateBookingCancelled` | `booking.cancelled` |
+| `BrevoTemplateVacateReminder` | `booking.vacate_reminder` |
+| `BrevoTemplateWaitlistAvailable` | `waitlist.slot_available` |
+
+Then redeploy so Lambda env vars pick them up:
+
+```bash
+./infra/scripts/deploy.sh
+```
+
+Templates use `{{ params.recipient_name }}`, `{{ params.room_name }}`,
+`{{ params.start_at }}`, `{{ params.end_at }}`, `{{ params.purpose }}`, etc.
+(see `backend/app/notifications/brevo.py`).
+
 ## Deploy (two-phase)
 
 Lambdas need an image in ECR before they can be created:
@@ -108,8 +141,10 @@ aws lambda update-function-code --function-name odc-meeting-api \
 aws lambda update-function-code --function-name odc-meeting-reminder \
   --image-uri "$(grep ECR_URI infra/local.env | cut -d= -f2):latest" --region us-east-2
 
-# Frontend (Streamlit on EC2) — SCP or git pull on the instance, then:
-#   sudo systemctl restart odc-streamlit.service
+# Frontend (Streamlit on EC2) — the systemd unit pulls origin/<RepoBranch> on
+# every start (ExecStartPre). After pushing to that branch:
+#   ssh … 'sudo systemctl restart odc-streamlit.service'
+# Also sets ARROW_DEFAULT_MEMORY_POOL=system to avoid a mimalloc segfault on rerun.
 ```
 
 ## Scripts (CloudFormation stack)
@@ -119,6 +154,7 @@ aws lambda update-function-code --function-name odc-meeting-reminder \
 | [`scripts/deploy.sh`](scripts/deploy.sh) | `aws cloudformation deploy` + write `local.env` |
 | [`scripts/build_and_push.sh`](scripts/build_and_push.sh) | Docker build → ECR |
 | [`scripts/userdata.sh`](scripts/userdata.sh) | Reference EC2 bootstrap (embedded in the template) |
+| [`scripts/create_brevo_templates.py`](scripts/create_brevo_templates.py) | Create/reuse Brevo transactional templates; print IDs |
 | [`migrate_rds.py`](migrate_rds.py) | Run `backend/migrations/*.sql` against RDS |
 | [`cloudformation/odc-stack.yaml`](cloudformation/odc-stack.yaml) | Stack template |
 

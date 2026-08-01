@@ -256,7 +256,7 @@ MeetingRoomBookingAssitant/
 | `ODC_TIMEZONE` | e.g. `America/Sao_Paulo` |
 | `BREVO_API_KEY` | Brevo transactional email API key |
 | `BREVO_SENDER_EMAIL` / `BREVO_SENDER_NAME` | Verified sender identity |
-| `BREVO_TEMPLATE_*` | Optional template IDs per event type |
+| `BREVO_TEMPLATE_*` | **Required** numeric template IDs per event (create via `infra/scripts/create_brevo_templates.py`) |
 | `TEAMS_WEBHOOK_URL` | Optional Incoming Webhook (channel posts) |
 | `TEAMS_GRAPH_*` | Optional Graph creds for 1:1 associate messages |
 | `REMINDER_LEAD_MINUTES` | Default `15` |

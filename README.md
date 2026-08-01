@@ -118,4 +118,19 @@ Lambda handlers (no deploy required to unit-test): `app.lambda_handlers.api_hand
 - `API_BASE_URL` — FastAPI base URL for the Streamlit UI (default `http://127.0.0.1:8000`)
 - For the LangGraph agent (live LLM calls), set `GROQ_API_KEY` (recommended free tier), or `OPENAI_API_KEY`, or Azure OpenAI vars (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`). Unit tests mock the model and do not call the network.
 
+### Email (Brevo)
+
+Booking confirmations, extensions, cancellations, waitlist alerts, and vacate reminders go through Brevo transactional templates. The API key and verified sender alone are **not** enough — each event needs a numeric template ID (`BREVO_TEMPLATE_*`).
+
+Create (or reuse) the five templates and print their IDs:
+
+```bash
+# needs BREVO_API_KEY + BREVO_SENDER_EMAIL (from .env or infra/parameters.json)
+python infra/scripts/create_brevo_templates.py
+```
+
+Copy the IDs into `.env` and `infra/parameters.json`, then redeploy the stack (or update the Lambda env vars) so the live API can send. Without the IDs, bookings still succeed but email fails silently (logged as `Missing Brevo template ID`).
+
+Smoke-test: save your real email in the Streamlit sidebar → Chat → book a free weekday slot → check inbox / Brevo **Transactional → Logs**.
+
 CI runs backend tests on pushes/PRs to `develop` and `main` (Postgres service + `pytest`).
