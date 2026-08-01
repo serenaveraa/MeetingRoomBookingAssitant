@@ -525,6 +525,12 @@ Resources:
             WorkingDirectory=$APP_ROOT/repo/frontend
             Environment=API_BASE_URL=${ApiBaseUrl}
             Environment=ODC_TIMEZONE=${OdcTimezone}
+            # User-data only runs at first boot, so refresh the checkout here to make
+            # a service restart enough to pick up a new commit. The leading "-" keeps
+            # a network blip or a bad fetch from blocking the UI from starting.
+            ExecStartPre=-/usr/bin/git -C $APP_ROOT/repo fetch --depth 1 origin ${RepoBranch}
+            ExecStartPre=-/usr/bin/git -C $APP_ROOT/repo reset --hard origin/${RepoBranch}
+            ExecStartPre=-$APP_ROOT/venv/bin/pip install -q -r $APP_ROOT/repo/frontend/requirements.txt
             ExecStart=$APP_ROOT/venv/bin/streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --browser.gatherUsageStats false
             Restart=always
             RestartSec=5
