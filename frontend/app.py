@@ -29,14 +29,50 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-if "associate_name" not in st.session_state:
-    st.session_state.associate_name = ""
-if "associate_email" not in st.session_state:
-    st.session_state.associate_email = ""
-if "conversation_id" not in st.session_state:
-    st.session_state.conversation_id = None
-if "chat_messages" not in st.session_state:
-    st.session_state.chat_messages = []
+HEALTH_TTL_SECONDS = 60
+BOOKINGS_TTL_SECONDS = 20
+UTILIZATION_TTL_SECONDS = 120
+
+
+@st.cache_data(ttl=HEALTH_TTL_SECONDS, show_spinner=False)
+def _cached_health() -> dict:
+    return get_health()
+
+
+@st.cache_data(ttl=BOOKINGS_TTL_SECONDS, show_spinner=False)
+def _cached_bookings(day_start: datetime, day_end: datetime) -> list[dict]:
+    return list_bookings(day_start, day_end, status="confirmed")
+
+
+@st.cache_data(ttl=UTILIZATION_TTL_SECONDS, show_spinner=False)
+def _cached_utilization(start: date, end: date) -> dict:
+    return get_utilization(start, end)
+
+
+# Identity also lives in the URL, so a page reload or a dropped websocket does
+# not sign the associate out.
+_query = st.query_params
+st.session_state.setdefault("associate_name", _query.get("name", ""))
+st.session_state.setdefault("associate_email", _query.get("email", ""))
+st.session_state.setdefault("conversation_id", None)
+st.session_state.setdefault("chat_messages", [])
+st.session_state.setdefault("name_input", st.session_state.associate_name)
+st.session_state.setdefault("email_input", st.session_state.associate_email)
+
+
+def _save_identity() -> None:
+    name = st.session_state.name_input.strip()
+    email = st.session_state.email_input.strip().lower()
+    st.session_state.associate_name = name
+    st.session_state.associate_email = email
+    if name and email:
+        st.query_params["name"] = name
+        st.query_params["email"] = email
+        st.toast(f"Signed in as {name}.")
+    else:
+        for key in ("name", "email"):
+            if key in st.query_params:
+                del st.query_params[key]
 
 
 def _today_odc() -> date:
@@ -63,20 +99,14 @@ def _identity_ready() -> bool:
 
 with st.sidebar:
     st.header("Associate")
-    name_in = st.text_input(
-        "Name",
-        value=st.session_state.associate_name,
-        placeholder="Ada Lovelace",
+    st.text_input("Name", key="name_input", placeholder="Ada Lovelace")
+    st.text_input("Email", key="email_input", placeholder="ada@example.com")
+    st.button(
+        "Save identity",
+        type="primary",
+        use_container_width=True,
+        on_click=_save_identity,
     )
-    email_in = st.text_input(
-        "Email",
-        value=st.session_state.associate_email,
-        placeholder="ada@example.com",
-    )
-    if st.button("Save identity", type="primary", use_container_width=True):
-        st.session_state.associate_name = name_in.strip()
-        st.session_state.associate_email = email_in.strip().lower()
-        st.success("Identity saved for this session.")
 
     if _identity_ready():
         st.caption(
@@ -90,10 +120,14 @@ with st.sidebar:
     st.header("Calendar day")
     selected_day = st.date_input(
         "Day",
+        key="calendar_day",
         value=_next_weekday(_today_odc()),
         help=f"Weekdays only — times shown in {ODC_TIMEZONE}",
     )
-    refresh = st.button("Refresh calendar", use_container_width=True)
+    if st.button("Refresh calendar", use_container_width=True):
+        _cached_health.clear()
+        _cached_bookings.clear()
+        _cached_utilization.clear()
     st.caption(f"API: `{get_api_base_url()}`")
     if st.session_state.conversation_id:
         st.caption(f"Chat conversation: `{st.session_state.conversation_id}`")
@@ -102,11 +136,14 @@ with st.sidebar:
 st.title("ODC Common Meeting Room")
 
 try:
-    health = get_health()
-    st.success(f"Backend OK — `{health.get('status', 'ok')}` at {get_api_base_url()}")
+    health = _cached_health()
 except ApiError as exc:
-    st.error(str(exc))
-    st.stop()
+    backend_ok = False
+    # Never st.stop() here: a single slow request should not blank the page.
+    st.warning(f"Backend not responding right now — {exc}")
+else:
+    backend_ok = True
+    st.success(f"Backend OK — `{health.get('status', 'ok')}` at {get_api_base_url()}")
 
 calendar_tab, insights_tab, chat_tab = st.tabs(["Calendar", "Insights", "Chat"])
 
@@ -120,11 +157,12 @@ with calendar_tab:
             "The meeting room cannot be scheduled on weekends. "
             "Pick a Monday–Friday date to view the calendar."
         )
+    elif not backend_ok:
+        st.info("Waiting for the backend — use **Refresh calendar** to retry.")
     else:
         day_start, day_end = local_day_bounds(selected_day)
         try:
-            _ = refresh  # noqa: F841
-            bookings = list_bookings(day_start, day_end, status="confirmed")
+            bookings = _cached_bookings(day_start, day_end)
         except ApiError as exc:
             st.error(str(exc))
         else:
@@ -161,9 +199,11 @@ with insights_tab:
 
     if start_date > end_date:
         st.error("End date must be on or after start date.")
+    elif not backend_ok:
+        st.info("Waiting for the backend — use **Refresh calendar** to retry.")
     else:
         try:
-            metrics = get_utilization(start_date, end_date)
+            metrics = _cached_utilization(start_date, end_date)
         except ApiError as exc:
             st.error(str(exc))
         else:
@@ -250,6 +290,10 @@ with chat_tab:
                     st.session_state.conversation_id = result.get("conversation_id")
                     reply = result.get("reply") or "(empty reply)"
                     outcomes = format_tool_outcomes(result.get("tool_results") or [])
+                    if result.get("tool_results"):
+                        # The turn may have booked or cancelled something.
+                        _cached_bookings.clear()
+                        _cached_utilization.clear()
                     st.markdown(reply)
                     if outcomes:
                         if any("conflict" in line.lower() for line in outcomes):

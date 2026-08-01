@@ -28,9 +28,15 @@ from app.services.timeutil import as_utc, ensure_utc
 logger = logging.getLogger(__name__)
 
 
-def _validate_window(start_at: datetime, end_at: datetime) -> None:
+def _validate_range(start_at: datetime, end_at: datetime) -> None:
+    """Ordering check for read queries, which may legitimately span weekends."""
     if end_at <= start_at:
         raise InvalidBookingWindowError(start_at, end_at)
+
+
+def _validate_window(start_at: datetime, end_at: datetime) -> None:
+    """Ordering plus the weekday-only rule, for windows that reserve the room."""
+    _validate_range(start_at, end_at)
     assert_no_weekend_booking(start_at, end_at)
 
 
@@ -73,7 +79,7 @@ def find_conflicts(
 ) -> list[Booking]:
     start_utc = ensure_utc(start_at)
     end_utc = ensure_utc(end_at)
-    _validate_window(start_utc, end_utc)
+    _validate_range(start_utc, end_utc)
     stmt = _overlap_query(
         room_id,
         start_utc,
@@ -350,7 +356,7 @@ def list_bookings(
 ) -> list[Booking]:
     start_utc = ensure_utc(start_at)
     end_utc = ensure_utc(end_at)
-    _validate_window(start_utc, end_utc)
+    _validate_range(start_utc, end_utc)
     resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
 
     stmt = select(Booking).where(
@@ -376,7 +382,7 @@ def list_my_bookings(
     """Confirmed (or filtered) bookings owned by associate in [start_at, end_at)."""
     start_utc = ensure_utc(start_at)
     end_utc = ensure_utc(end_at)
-    _validate_window(start_utc, end_utc)
+    _validate_range(start_utc, end_utc)
     resolved_room_id = room_id if room_id is not None else get_odc_room(session).id
 
     stmt = select(Booking).where(

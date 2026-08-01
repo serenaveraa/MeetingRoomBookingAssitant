@@ -7,8 +7,10 @@ from typing import Any
 import httpx
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
-DEFAULT_TIMEOUT = 10.0
+DEFAULT_TIMEOUT = 15.0
 CHAT_TIMEOUT = 90.0
+# A cold Lambda can drop the first connection; GETs are safe to repeat.
+GET_ATTEMPTS = 2
 
 
 class ApiError(RuntimeError):
@@ -19,18 +21,31 @@ def get_api_base_url() -> str:
     return os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/")
 
 
+def _get(
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> httpx.Response:
+    last_exc: httpx.HTTPError | None = None
+    for attempt in range(GET_ATTEMPTS):
+        try:
+            return httpx.get(url, params=params, timeout=timeout)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            if attempt == GET_ATTEMPTS - 1:
+                break
+    raise ApiError(f"Could not reach {url}: {last_exc}") from last_exc
+
+
 def get_health(*, base_url: str | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     url = f"{base_url or get_api_base_url()}/health"
+    response = _get(url, timeout=timeout)
     try:
-        response = httpx.get(url, timeout=timeout)
         response.raise_for_status()
         return response.json()
     except httpx.HTTPError as exc:
-        raise ApiError(
-            f"Backend unreachable at {url}. "
-            "Start it with: cd backend && .venv/Scripts/python.exe -m uvicorn "
-            "app.main:app --reload --host 127.0.0.1 --port 8000"
-        ) from exc
+        raise ApiError(f"Backend unhealthy at {url}: {exc}") from exc
 
 
 def list_bookings(
@@ -47,15 +62,13 @@ def list_bookings(
         "end_at": end_at.isoformat(),
         "status": status,
     }
-    try:
-        response = httpx.get(url, params=params, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-        if not isinstance(data, list):
-            raise ApiError("Unexpected /bookings response shape")
-        return data
-    except httpx.HTTPError as exc:
-        raise ApiError(f"Failed to load bookings from {url}: {exc}") from exc
+    response = _get(url, params=params, timeout=timeout)
+    if response.status_code >= 400:
+        raise ApiError(f"Bookings failed ({response.status_code}): {_error_detail(response)}")
+    data = response.json()
+    if not isinstance(data, list):
+        raise ApiError("Unexpected /bookings response shape")
+    return data
 
 
 def _format_date(value: date | datetime) -> str:
@@ -76,17 +89,14 @@ def get_utilization(
         "start_date": _format_date(start_date),
         "end_date": _format_date(end_date),
     }
-    try:
-        response = httpx.get(url, params=params, timeout=timeout)
-        if response.status_code >= 400:
-            detail = _error_detail(response)
-            raise ApiError(f"Utilization failed ({response.status_code}): {detail}")
-        data = response.json()
-        if not isinstance(data, dict):
-            raise ApiError("Unexpected /insights/utilization response shape")
-        return data
-    except httpx.HTTPError as exc:
-        raise ApiError(f"Failed to load utilization from {url}: {exc}") from exc
+    response = _get(url, params=params, timeout=timeout)
+    if response.status_code >= 400:
+        detail = _error_detail(response)
+        raise ApiError(f"Utilization failed ({response.status_code}): {detail}")
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ApiError("Unexpected /insights/utilization response shape")
+    return data
 
 
 def post_chat(

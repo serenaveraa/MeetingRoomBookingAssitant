@@ -197,6 +197,23 @@ def test_weekend_booking_is_rejected():
         assert str(exc_info.value) == WEEKEND_BOOKING_MESSAGE
 
 
+def test_listing_bookings_over_a_weekend_range_is_allowed():
+    """Reads span whole weeks; only reserving windows are weekday-only."""
+    from zoneinfo import ZoneInfo
+
+    from app.services.booking import list_bookings
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    with get_session_factory()() as session:
+        make_associate(session)
+        found = list_bookings(
+            session,
+            start_at=datetime(2026, 7, 27, 0, 0, tzinfo=tz),  # Monday
+            end_at=datetime(2026, 8, 3, 0, 0, tzinfo=tz),  # next Monday
+        )
+        assert found == []
+
+
 def test_weekday_booking_still_allowed():
     from zoneinfo import ZoneInfo
 
