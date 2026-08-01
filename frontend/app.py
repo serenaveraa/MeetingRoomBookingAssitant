@@ -68,7 +68,6 @@ def _save_identity() -> None:
     if name and email:
         st.query_params["name"] = name
         st.query_params["email"] = email
-        st.toast(f"Signed in as {name}.")
     else:
         for key in ("name", "email"):
             if key in st.query_params:
@@ -99,8 +98,20 @@ def _identity_ready() -> bool:
 
 with st.sidebar:
     st.header("Associate")
-    st.text_input("Name", key="name_input", placeholder="Ada Lovelace")
-    st.text_input("Email", key="email_input", placeholder="ada@example.com")
+    # on_change saves as soon as a field is committed, so the button is a
+    # confirmation rather than the only way to apply the identity.
+    st.text_input(
+        "Name",
+        key="name_input",
+        placeholder="Ada Lovelace",
+        on_change=_save_identity,
+    )
+    st.text_input(
+        "Email",
+        key="email_input",
+        placeholder="ada@example.com",
+        on_change=_save_identity,
+    )
     st.button(
         "Save identity",
         type="primary",
@@ -109,12 +120,12 @@ with st.sidebar:
     )
 
     if _identity_ready():
-        st.caption(
-            f"Signed in as **{st.session_state.associate_name}** "
-            f"<{st.session_state.associate_email}>"
+        st.success(
+            f"Signed in as {st.session_state.associate_name} "
+            f"({st.session_state.associate_email})"
         )
     else:
-        st.caption("Save name and email before using chat.")
+        st.info("Add your name and email to start chatting.")
 
     st.divider()
     st.header("Calendar day")
@@ -193,9 +204,11 @@ with insights_tab:
     st.caption("Utilization metrics over a date range using the shared backend service.")
     col_left, col_right = st.columns(2)
     with col_left:
-        start_date = st.date_input("Start date", value=_today_odc() - timedelta(days=6))
+        start_date = st.date_input(
+            "Start date", key="insights_start", value=_today_odc() - timedelta(days=6)
+        )
     with col_right:
-        end_date = st.date_input("End date", value=_today_odc())
+        end_date = st.date_input("End date", key="insights_end", value=_today_odc())
 
     if start_date > end_date:
         st.error("End date must be on or after start date.")
