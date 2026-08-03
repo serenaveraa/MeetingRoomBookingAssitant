@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any, Literal
@@ -9,7 +10,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-ODC_TIMEZONE = "America/Sao_Paulo"
+ODC_TIMEZONE = os.getenv("ODC_TIMEZONE", "America/Montevideo")
 BUSINESS_DAY_START = time(8, 0)
 BUSINESS_DAY_END = time(18, 0)
 

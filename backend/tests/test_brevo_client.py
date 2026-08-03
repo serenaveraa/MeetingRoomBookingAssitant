@@ -11,6 +11,7 @@ from app.notifications.brevo import BrevoClient, BrevoSendResult
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
+        odc_timezone="America/Montevideo",
         brevo_api_key="test-key",
         brevo_sender_email="sender@example.com",
         brevo_sender_name="ODC Meeting Room",
@@ -39,8 +40,12 @@ def test_send_booking_confirmed_uses_template(post, settings):
 
     assert result.success is True
     post.assert_called_once()
-    assert post.call_args.kwargs["json"]["templateId"] == 101
-    assert post.call_args.kwargs["json"]["sender"]["email"] == "sender@example.com"
+    body = post.call_args.kwargs["json"]
+    assert body["templateId"] == 101
+    assert body["sender"]["email"] == "sender@example.com"
+    # UTC 10:00 / 11:00 → Uruguay (UTC-3) 07:00 / 08:00
+    assert body["params"]["start_at"] == "25/07/2026 07:00"
+    assert body["params"]["end_at"] == "25/07/2026 08:00"
 
 
 @patch("app.notifications.brevo.httpx.post")
@@ -64,9 +69,10 @@ def test_send_extended_uses_template(post, settings):
     )
 
     assert result.success is True
+    params = post.call_args.kwargs["json"]["params"]
     assert post.call_args.kwargs["json"]["templateId"] == 102
-    assert post.call_args.kwargs["json"]["templateId"] == 102
-
+    assert params["previous_end_at"] == "25/07/2026 08:00"
+    assert params["end_at"] == "25/07/2026 08:30"
 
 @patch("app.notifications.brevo.httpx.post")
 def test_send_cancelled_uses_template(post, settings):

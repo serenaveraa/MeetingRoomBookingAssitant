@@ -253,7 +253,7 @@ MeetingRoomBookingAssitant/
 |---|---|
 | `DATABASE_URL` | Docker Postgres URL (required for running the app) |
 | `OPENAI_API_KEY` / Azure OpenAI settings | LLM access |
-| `ODC_TIMEZONE` | e.g. `America/Sao_Paulo` |
+| `ODC_TIMEZONE` | e.g. `America/Montevideo` |
 | `BREVO_API_KEY` | Brevo transactional email API key |
 | `BREVO_SENDER_EMAIL` / `BREVO_SENDER_NAME` | Verified sender identity |
 | `BREVO_TEMPLATE_*` | **Required** numeric template IDs per event (create via `infra/scripts/create_brevo_templates.py`) |

@@ -7,13 +7,20 @@ import pytest
 
 from app.agent.entities import (
     EntityResolutionError,
+    extract_explicit_calendar_date,
     resolve_booking_window,
     resolve_day,
 )
-from app.agent.graph import apply_clarification_guard, invoke_agent
+from app.agent.graph import (
+    apply_clarification_guard,
+    apply_entity_grounding,
+    apply_scope_guard,
+    invoke_agent,
+)
 from app.agent.prompts import build_system_prompt
 from app.agent.schema import AgentDecision, ExtractedEntities, Intent
 from app.agent.tools import (
+    OTHER_SCOPE_REPLY,
     CreateBookingArgs,
     ExtendBookingArgs,
     ListMyBookingsArgs,
@@ -113,6 +120,7 @@ def test_resolve_day_month_names_and_weekday_phrases():
     assert resolve_day("day after tomorrow", today=saturday) == date(2026, 8, 3)
     assert resolve_day("Saturday, August 8th", today=saturday) == date(2026, 8, 8)
     assert resolve_day("Monday august 3", today=saturday) == date(2026, 8, 3)
+    assert resolve_day("January 1s 2025", today=saturday) == date(2025, 1, 1)
 
 
 def test_resolve_day_rolls_month_without_year_forward():
@@ -122,6 +130,80 @@ def test_resolve_day_rolls_month_without_year_forward():
 def test_resolve_day_rejects_unknown_phrase():
     with pytest.raises(EntityResolutionError):
         resolve_day("whenever you like", today=date(2026, 8, 1))
+
+
+def test_parse_spanish_hs_times():
+    start, end = resolve_booking_window(
+        ExtractedEntities(
+            date="2026-08-03",
+            start_time="12 hs",
+            end_time="13 hs",
+        ),
+        today=date(2026, 8, 1),
+    )
+    local_tz = get_odc_tz()
+    assert start.astimezone(local_tz).hour == 12
+    assert end.astimezone(local_tz).hour == 13
+
+
+def test_extract_explicit_calendar_date_keeps_named_year():
+    today = date(2026, 8, 3)
+    assert (
+        extract_explicit_calendar_date(
+            "book the room for January 1s 2025 from 12 to 13 hs",
+            today=today,
+        )
+        == date(2025, 1, 1)
+    )
+
+
+def test_apply_entity_grounding_blocks_past_year_and_wrong_roll_forward():
+    # Model invents 2027; user named 2025 — ground then clarify as past.
+    decision = _decision(
+        entities=ExtractedEntities(
+            date="2027-01-01",
+            start_time="12:00",
+            end_time="13:00",
+        ),
+        assistant_message="Booking January 2027.",
+    )
+    grounded = apply_entity_grounding(
+        decision,
+        "book the room for January 1s 2025 from 12 to 13 hs",
+        today=date(2026, 8, 3),
+    )
+    assert grounded.entities.date == "2025-01-01"
+    assert grounded.needs_clarification is True
+    assert "past" in (grounded.assistant_message or "").lower()
+    assert run_tools_for_intent(grounded, _ctx()) == []
+
+
+def test_apply_scope_guard_and_compose_reply_refuse_off_topic():
+    decision = _decision(
+        intent=Intent.other,
+        assistant_message=(
+            "The square root of 2 is approximately 1.414. "
+            "Here is HTML: <html><body>Hello</body></html>"
+        ),
+    )
+    guarded = apply_scope_guard(decision)
+    assert guarded.assistant_message == OTHER_SCOPE_REPLY
+    assert "1.414" not in guarded.assistant_message
+    assert "<html>" not in guarded.assistant_message
+    reply = compose_reply(guarded, [])
+    assert reply == OTHER_SCOPE_REPLY
+    assert "pi" not in reply.lower()
+
+
+def test_system_prompt_states_scope_and_date_fidelity():
+    prompt = build_system_prompt(
+        odc_timezone="America/Sao_Paulo", today=date(2026, 8, 1)
+    )
+    assert "2026-08-01" in prompt
+    assert "Saturday" in prompt
+    assert "Never answer off-topic" in prompt or "Never answer off-topic requests" in prompt
+    assert "explicit calendar year" in prompt
+    assert "jailbreak" in prompt.lower() or "Ignore" in prompt or "instruction overrides" in prompt
 
 
 def test_resolve_booking_window_corrects_stale_model_year():
@@ -383,7 +465,7 @@ def test_run_tools_skips_when_clarification_needed():
 def test_invoke_agent_book_success_runs_create(monkeypatch):
     booked = _decision(
         entities=ExtractedEntities(
-            date="2026-07-16",
+            date="2026-08-10",
             start_time="14:00",
             end_time="15:00",
         ),
@@ -403,7 +485,7 @@ def test_invoke_agent_book_success_runs_create(monkeypatch):
         patch("app.agent.tools.svc_create_booking", return_value=booking) as mock_create,
     ):
         turn = invoke_agent(
-            "Book 2-3 PM",
+            "Book August 10 from 2-3 PM",
             associate_email="ada@example.com",
             associate_name="Ada",
             session=session,

@@ -12,7 +12,7 @@
   "BrevoTemplateBookingCancelled": "",
   "BrevoTemplateVacateReminder": "",
   "BrevoTemplateWaitlistAvailable": "",
-  "OdcTimezone": "America/Sao_Paulo",
+  "OdcTimezone": "America/Montevideo",
   "ReminderLeadMinutes": "15",
   "RepoUrl": "https://github.com/serenaveraa/MeetingRoomBookingAssitant.git",
   "RepoBranch": "develop",

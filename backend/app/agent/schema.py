@@ -18,15 +18,18 @@ class Intent(str, Enum):
 class ExtractedEntities(BaseModel):
     date: str | None = Field(
         default=None,
-        description="Meeting date as YYYY-MM-DD or relative phrase like 'tomorrow'",
+        description=(
+            "Meeting date as YYYY-MM-DD or relative phrase like 'tomorrow'. "
+            "Keep any year the associate named exactly."
+        ),
     )
     start_time: str | None = Field(
         default=None,
-        description="Start time like '14:00' or '2 PM'",
+        description="Start time like '14:00', '2 PM', or '12:00' (from '12 hs')",
     )
     end_time: str | None = Field(
         default=None,
-        description="End time like '15:00' or '3 PM'",
+        description="End time like '15:00', '3 PM', or '13:00' (from '13 hs')",
     )
     duration_minutes: int | None = Field(
         default=None,
@@ -44,7 +47,10 @@ class AgentDecision(BaseModel):
     needs_clarification: bool = False
     clarification_question: str | None = None
     assistant_message: str = Field(
-        description="Natural-language reply to show the user for this turn"
+        description=(
+            "User-facing reply for clarify/help. For unrelated, jailbreak, math, "
+            "or code requests: brief meeting-room redirect only — never answer them."
+        )
     )
 
 

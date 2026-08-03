@@ -537,6 +537,12 @@ def run_tools_for_intent(
 # error text is already the best user-facing explanation.
 _REQUEST_ERROR_TYPES = {"InvalidBookingWindowError", "EntityResolutionError"}
 
+OTHER_SCOPE_REPLY = (
+    "I'm the ODC Meeting Room Booking Assistant. I only help with booking the "
+    "shared meeting room, checking availability, extending or cancelling "
+    "meetings, and utilization insights. How can I help with the meeting room?"
+)
+
 
 def compose_reply(decision: AgentDecision, results: list[ToolResult]) -> str:
     """Deterministic user-facing message from tool outcomes."""
@@ -546,6 +552,8 @@ def compose_reply(decision: AgentDecision, results: list[ToolResult]) -> str:
         )
 
     if not results:
+        if decision.intent == Intent.other:
+            return OTHER_SCOPE_REPLY
         return decision.assistant_message or "How can I help with the meeting room?"
 
     by_name = {r.tool: r for r in results}

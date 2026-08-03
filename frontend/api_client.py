@@ -7,10 +7,10 @@ from typing import Any
 import httpx
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
-DEFAULT_TIMEOUT = 15.0
+DEFAULT_TIMEOUT = 30.0
 CHAT_TIMEOUT = 90.0
 # A cold Lambda can drop the first connection; GETs are safe to repeat.
-GET_ATTEMPTS = 2
+GET_ATTEMPTS = 3
 
 
 class ApiError(RuntimeError):

@@ -25,6 +25,8 @@ _TIME_PATTERNS = (
 def _parse_time_of_day(raw: str) -> tuple[int, int]:
     text = raw.strip().lower().replace(".", "")
     text = re.sub(r"\s+", " ", text)
+    # Spanish/local shorthand: "12 hs", "13h", "14 horas"
+    text = re.sub(r"\s*h(?:oras?|s)?\b", "", text).strip()
 
     for pattern in _TIME_PATTERNS:
         match = pattern.match(text)
@@ -107,11 +109,25 @@ _MONTH_NAMES = {
 }
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_ORDINAL_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b")
+# Include truncated ordinals like "1s" (typo for 1st).
+_ORDINAL_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th|s)\b")
 _WEEKDAY_RE = re.compile(r"^(?:(this|next|coming|upcoming)\s+)?([a-z]+)$")
 _MONTH_DAY_RE = re.compile(r"^([a-z]+)\s+(\d{1,2})(?:\s+(\d{4}))?$")
 _DAY_MONTH_RE = re.compile(r"^(\d{1,2})\s+(?:of\s+)?([a-z]+)(?:\s+(\d{4}))?$")
 _IN_DAYS_RE = re.compile(r"^in\s+(\d{1,3})\s+days?$")
+
+_MONTH_ALT = "|".join(
+    sorted((re.escape(name) for name in _MONTH_NAMES), key=len, reverse=True)
+)
+_EXPLICIT_MONTH_DAY_RE = re.compile(
+    rf"\b({_MONTH_ALT})\s+(\d{{1,2}})(?:st|nd|rd|th|s)?(?:\s*,?\s*(\d{{4}}))?\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_DAY_MONTH_RE = re.compile(
+    rf"\b(\d{{1,2}})(?:st|nd|rd|th|s)?\s+(?:of\s+)?({_MONTH_ALT})(?:\s*,?\s*(\d{{4}}))?\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_ISO_IN_TEXT_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
 
 def _normalize_day_text(raw: str) -> str:
@@ -120,6 +136,59 @@ def _normalize_day_text(raw: str) -> str:
     text = re.sub(r"\bthe\b", " ", text)
     text = _ORDINAL_RE.sub(r"\1", text)
     return re.sub(r"\s+", " ", text).strip(" .")
+
+
+def extract_explicit_calendar_date(
+    message: str, *, today: date | None = None
+) -> date | None:
+    """Pull an explicit month/day (and optional year) from the raw user message.
+
+    Used to ground LLM-extracted ISO dates so a named year like 2025 is not
+    silently replaced with a later year.
+    """
+    if not message or not message.strip():
+        return None
+    tz = get_odc_tz()
+    base = today if today is not None else datetime.now(tz).date()
+
+    # Prefer phrases that include a year; otherwise first month/day mention.
+    candidates: list[tuple[int, date]] = []  # (priority, day) higher = better
+    for match in _EXPLICIT_MONTH_DAY_RE.finditer(message):
+        month_name, day_str, year = match.groups()
+        month = _MONTH_NAMES.get(month_name.lower())
+        if month is None:
+            continue
+        day = int(day_str)
+        try:
+            if year:
+                candidates.append((2, date(int(year), month, day)))
+            else:
+                candidates.append((1, _upcoming_month_day(month, day, base)))
+        except (ValueError, EntityResolutionError):
+            continue
+    for match in _EXPLICIT_DAY_MONTH_RE.finditer(message):
+        day_str, month_name, year = match.groups()
+        month = _MONTH_NAMES.get(month_name.lower())
+        if month is None:
+            continue
+        day = int(day_str)
+        try:
+            if year:
+                candidates.append((2, date(int(year), month, day)))
+            else:
+                candidates.append((1, _upcoming_month_day(month, day, base)))
+        except (ValueError, EntityResolutionError):
+            continue
+    for match in _EXPLICIT_ISO_IN_TEXT_RE.finditer(message):
+        try:
+            candidates.append((2, date.fromisoformat(match.group(1))))
+        except ValueError:
+            continue
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
 
 
 def _upcoming_month_day(month: int, day: int, base: date) -> date:

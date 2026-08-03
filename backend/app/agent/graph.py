@@ -1,15 +1,29 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
+from app.agent.entities import (
+    EntityResolutionError,
+    extract_explicit_calendar_date,
+    resolve_day,
+)
 from app.agent.llm import get_chat_model
 from app.agent.prompts import build_system_prompt
 from app.agent.schema import AgentDecision, AgentTurn, Intent
 from app.agent.state import AgentState
-from app.agent.tools import ToolContext, ToolResult, compose_reply, run_tools_for_intent
+from app.agent.tools import (
+    OTHER_SCOPE_REPLY,
+    ToolContext,
+    ToolResult,
+    compose_reply,
+    run_tools_for_intent,
+)
 from app.config import get_settings
 
 _DEFAULT_CLARIFY_BOOK = (
@@ -19,6 +33,12 @@ _DEFAULT_CLARIFY_BOOK = (
 _DEFAULT_CLARIFY_EXTEND = (
     "How many minutes should I extend your meeting? For example: 15 or 30."
 )
+_DEFAULT_CLARIFY_PAST = (
+    "That date is in the past. Please pick a future weekday "
+    "(Monday–Friday) and a start/end time."
+)
+
+_SLOT_INTENTS = {Intent.availability, Intent.book}
 
 
 def apply_clarification_guard(decision: AgentDecision) -> AgentDecision:
@@ -62,6 +82,64 @@ def apply_clarification_guard(decision: AgentDecision) -> AgentDecision:
     return decision
 
 
+def apply_entity_grounding(
+    decision: AgentDecision,
+    user_message: str,
+    *,
+    today: date,
+) -> AgentDecision:
+    """Ground dates against the raw message and block past-day bookings.
+
+    Evaluates extracted slots before tools run so a model cannot silently book
+    a different year than the associate named.
+    """
+    if decision.intent not in _SLOT_INTENTS:
+        return decision
+
+    entities = decision.entities
+    grounded = extract_explicit_calendar_date(user_message, today=today)
+    if grounded is not None:
+        entities = entities.model_copy(update={"date": grounded.isoformat()})
+        decision = decision.model_copy(update={"entities": entities})
+
+    raw_date = decision.entities.date
+    if not raw_date:
+        return decision
+
+    try:
+        day = resolve_day(raw_date, today=today)
+    except EntityResolutionError:
+        return decision
+
+    if day < today:
+        question = _DEFAULT_CLARIFY_PAST
+        message = (
+            f"{day.isoformat()} is in the past. {question}"
+        )
+        return decision.model_copy(
+            update={
+                "needs_clarification": True,
+                "clarification_question": question,
+                "assistant_message": message,
+                "entities": decision.entities,
+            }
+        )
+    return decision
+
+
+def apply_scope_guard(decision: AgentDecision) -> AgentDecision:
+    """Replace free-form off-topic replies with a fixed meeting-room redirect."""
+    if decision.intent != Intent.other:
+        return decision
+    return decision.model_copy(
+        update={
+            "assistant_message": OTHER_SCOPE_REPLY,
+            "needs_clarification": False,
+            "clarification_question": None,
+        }
+    )
+
+
 def _extract_node(state: AgentState, *, model: BaseChatModel) -> dict:
     # function_calling works across OpenAI and Groq; json_schema is not
     # supported on all Groq models.
@@ -69,9 +147,10 @@ def _extract_node(state: AgentState, *, model: BaseChatModel) -> dict:
         AgentDecision, method="function_calling"
     )
     system = build_system_prompt(odc_timezone=state["odc_timezone"])
+    user_text = str(state["messages"][-1].content)
     user_bits = [
         f"Associate: {state['associate_name']} <{state['associate_email']}>",
-        f"Message: {state['messages'][-1].content}",
+        f"Message: {user_text}",
     ]
     decision: AgentDecision = structured.invoke(
         [
@@ -79,7 +158,11 @@ def _extract_node(state: AgentState, *, model: BaseChatModel) -> dict:
             HumanMessage(content="\n".join(user_bits)),
         ]
     )
+    today = datetime.now(ZoneInfo(state["odc_timezone"])).date()
+    # Start/extend guards first; date grounding may then force a past-date clarify.
     decision = apply_clarification_guard(decision)
+    decision = apply_entity_grounding(decision, user_text, today=today)
+    decision = apply_scope_guard(decision)
     return {"decision": decision}
 
 

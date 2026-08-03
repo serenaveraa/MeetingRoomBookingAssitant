@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import httpx
 
 from app.config import Settings
+from app.local_time import format_local
 
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
@@ -180,12 +181,11 @@ class BrevoClient:
         }
         return {k: v for k, v in params.items() if v is not None}
 
-    @staticmethod
-    def _normalize(value: Any) -> Any:
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, date):
-            return value.isoformat()
+    def _normalize(self, value: Any) -> Any:
+        # Bookings are stored in UTC; emails must show Uruguay (ODC) local time.
+        if isinstance(value, (datetime, date)) or isinstance(value, str):
+            formatted = format_local(value, tz_name=self.settings.odc_timezone)
+            return formatted if formatted is not None else value
         return value
 
     @staticmethod

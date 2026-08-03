@@ -134,7 +134,7 @@ Parameters:
 
   OdcTimezone:
     Type: String
-    Default: America/Sao_Paulo
+    Default: America/Montevideo
 
   ReminderLeadMinutes:
     Type: Number
