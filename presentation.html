@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ODC Meeting Room Booking Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b1210;
+      --bg-elev: #121a17;
+      --ink: #e7ece7;
+      --muted: #8a9a90;
+      --line: #24302a;
+      --accent: #5ecf9a;
+      --accent-dim: rgba(94, 207, 154, 0.14);
+      --warn: #e6b35c;
+      --danger: #e07a6a;
+      --display: "Bricolage Grotesque", system-ui, sans-serif;
+      --sans: "IBM Plex Sans", system-ui, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      overflow: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 70% 50% at 10% -10%, rgba(94, 207, 154, 0.08), transparent 55%),
+        radial-gradient(ellipse 50% 40% at 100% 100%, rgba(94, 207, 154, 0.05), transparent 50%),
+        repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 47px,
+          rgba(231, 236, 231, 0.015) 48px
+        );
+      z-index: 0;
+    }
+
+    .deck {
+      position: relative;
+      z-index: 1;
+      height: 100%;
+      width: 100%;
+    }
+
+    .slide {
+      display: none;
+      height: 100%;
+      padding: clamp(2rem, 5vh, 3.5rem) clamp(2rem, 6vw, 5rem);
+      flex-direction: column;
+      justify-content: center;
+      gap: 1.25rem;
+      max-width: 1180px;
+      margin: 0 auto;
+      animation: enter 280ms ease-out;
+    }
+
+    .slide.active { display: flex; }
+
+    @keyframes enter {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .kicker {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    h1 {
+      font-family: var(--display);
+      font-weight: 800;
+      font-size: clamp(2.4rem, 5.5vw, 4.2rem);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      max-width: 18ch;
+    }
+
+    h2 {
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: clamp(1.8rem, 3.6vw, 2.75rem);
+      line-height: 1.12;
+      letter-spacing: -0.025em;
+      max-width: 28ch;
+    }
+
+    h3 {
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.55rem;
+    }
+
+    .lede {
+      font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+      line-height: 1.5;
+      color: var(--muted);
+      max-width: 52ch;
+    }
+
+    .grid {
+      display: grid;
+      gap: 1rem;
+      width: 100%;
+    }
+
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    @media (max-width: 820px) {
+      .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+      .slide { justify-content: flex-start; overflow-y: auto; }
+    }
+
+    .stat {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.1rem 1.2rem;
+    }
+
+    .stat .label {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .stat .value {
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: 1.55rem;
+      letter-spacing: -0.02em;
+    }
+
+    .stat .hint {
+      margin-top: 0.35rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.4;
+    }
+
+    .panel {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1.15rem 1.25rem;
+    }
+
+    .panel.accent {
+      background: var(--accent-dim);
+      border-color: rgba(94, 207, 154, 0.35);
+    }
+
+    ul.clean {
+      list-style: none;
+      display: grid;
+      gap: 0.55rem;
+    }
+
+    ul.clean li {
+      display: grid;
+      grid-template-columns: 0.7rem 1fr;
+      gap: 0.7rem;
+      align-items: start;
+      line-height: 1.45;
+      color: var(--ink);
+      font-size: 1rem;
+    }
+
+    ul.clean li::before {
+      content: "";
+      width: 0.45rem;
+      height: 0.45rem;
+      margin-top: 0.45rem;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .quote {
+      font-family: var(--display);
+      font-size: clamp(1.2rem, 2.2vw, 1.55rem);
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      line-height: 1.35;
+      border-left: 3px solid var(--accent);
+      padding-left: 1rem;
+      color: var(--ink);
+    }
+
+    table.dense {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+
+    table.dense th,
+    table.dense td {
+      text-align: left;
+      padding: 0.7rem 0.85rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    table.dense th {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    table.dense td:first-child,
+    table.dense code {
+      font-family: var(--mono);
+      font-size: 0.86rem;
+      color: var(--accent);
+    }
+
+    .flow {
+      font-family: var(--mono);
+      font-size: clamp(0.78rem, 1.3vw, 0.92rem);
+      line-height: 1.7;
+      color: var(--ink);
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1rem 1.15rem;
+      white-space: pre-wrap;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .pill {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      padding: 0.4rem 0.7rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .pill.on {
+      color: var(--accent);
+      border-color: rgba(94, 207, 154, 0.4);
+      background: var(--accent-dim);
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 1.25rem;
+      width: 100%;
+      align-items: start;
+    }
+
+    @media (max-width: 820px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+
+    a.live {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(94, 207, 154, 0.35);
+      word-break: break-all;
+    }
+
+    a.live:hover { border-bottom-color: var(--accent); }
+
+    .chrome {
+      position: fixed;
+      z-index: 5;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.85rem 1.25rem;
+      background: rgba(11, 18, 16, 0.85);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+    }
+
+    .chrome .brand {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .progress {
+      flex: 1;
+      height: 3px;
+      background: var(--line);
+      border-radius: 999px;
+      overflow: hidden;
+      max-width: 280px;
+    }
+
+    .progress > span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 200ms ease;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+
+    .nav button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--bg-elev);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      padding: 0.45rem 0.7rem;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .nav button:hover { border-color: var(--accent); color: var(--accent); }
+    .nav button:disabled { opacity: 0.35; cursor: default; }
+
+    .counter {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--muted);
+      min-width: 4.5rem;
+      text-align: right;
+    }
+
+    .hint-keys {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 5;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+
+    .title-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.85rem;
+      margin-top: 0.5rem;
+      width: min(100%, 720px);
+    }
+
+    @media (max-width: 700px) {
+      .title-metrics { grid-template-columns: 1fr; }
+      .hint-keys { display: none; }
+    }
+
+    .small {
+      font-size: 0.92rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .diagram-wrap {
+      width: 100%;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 0.85rem 0.9rem 0.7rem;
+      overflow: hidden;
+    }
+
+    .diagram-wrap svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: min(52vh, 420px);
+    }
+
+    .diagram-wrap.tall svg {
+      max-height: min(58vh, 480px);
+    }
+
+    .diagram-caption {
+      margin-top: 0.55rem;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .diagram-note {
+      margin-top: 0.45rem;
+      font-size: 0.88rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .arch-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      width: 100%;
+      align-items: stretch;
+    }
+
+    @media (max-width: 900px) {
+      .arch-pair { grid-template-columns: 1fr; }
+      .diagram-wrap svg { max-height: none; }
+    }
+
+    .deck { padding-bottom: 3.5rem; }
+  </style>
+</head>
+<body>
+  <div class="hint-keys">← → · Space · F fullscreen</div>
+  <div class="deck" id="deck">
+
+    <!-- 1 -->
+    <section class="slide active" data-title="Title">
+      <p class="kicker">AI Agent Case Study</p>
+      <h1>ODC Meeting Room Booking Assistant</h1>
+      <p class="lede">
+        An intelligent agent that lets associates reserve and manage a single shared
+        meeting room with natural language — conflict-free bookings, vacate reminders,
+        and utilization insights.
+      </p>
+      <div class="title-metrics">
+        <div class="stat"><div class="label">Scope</div><div class="value">1 room</div><div class="hint">Shared ODC resource</div></div>
+        <div class="stat"><div class="label">Interface</div><div class="value">NL chat</div><div class="hint">LangGraph agent</div></div>
+        <div class="stat"><div class="label">Runtime</div><div class="value">AWS FT</div><div class="hint">Fully cloud demo</div></div>
+      </div>
+      <div class="panel accent" style="margin-top:0.35rem; width:min(100%, 720px)">
+        <h3>Live Streamlit</h3>
+        <p class="small" style="margin-top:0.25rem">
+          <a class="live" href="http://18.222.179.17:8501" target="_blank" rel="noopener">http://18.222.179.17:8501</a>
+        </p>
+      </div>
+      <p class="small">Problem, requirements, architecture, Free Tier cloud & live demo</p>
+    </section>
+
+    <!-- 2 -->
+    <section class="slide" data-title="The problem">
+      <p class="kicker">01 · Context</p>
+      <h2>One room. Heavy demand. Friction everywhere.</h2>
+      <div class="two-col">
+        <div class="panel">
+          <h3>Pain points</h3>
+          <ul class="clean">
+            <li>Booking conflicts under heavy demand</li>
+            <li>No clear view of free slots</li>
+            <li>Manual coordination across associates</li>
+          </ul>
+        </div>
+        <div class="panel accent">
+          <h3>Goal</h3>
+          <ul class="clean">
+            <li>Book via natural language</li>
+            <li>Show availability clearly</li>
+            <li>Prevent overlapping bookings</li>
+            <li>Remind before end when next meeting waits</li>
+            <li>Handle extend, cancel, waitlist + insights</li>
+          </ul>
+        </div>
+      </div>
+      <p class="small"><strong style="color:var(--ink)">Schedule rule:</strong> Monday–Friday only</p>
+    </section>
+
+    <!-- 3 -->
+    <section class="slide" data-title="Requirements">
+      <p class="kicker">02 · Functional requirements</p>
+      <h2>What the agent must do</h2>
+      <div class="grid cols-2">
+        <div class="panel">
+          <h3>1–2 · Availability &amp; booking</h3>
+          <p class="quote">“Can I book today from 2–3 PM?”</p>
+          <p class="small" style="margin-top:0.75rem">Check calendar, confirm. Extract date, start, end/duration, purpose.</p>
+        </div>
+        <div class="panel">
+          <h3>3 · Conflict detection</h3>
+          <p class="small">If taken: report the conflicting window and suggest nearest free alternatives of equal duration the same day.</p>
+        </div>
+        <div class="panel">
+          <h3>4 · 15-min vacate notice</h3>
+          <p class="small">When a booking ends soon and another starts immediately after, email the current occupant to vacate.</p>
+        </div>
+        <div class="panel">
+          <h3>5–6 · Extend &amp; cancel</h3>
+          <p class="small">Extend only if free; otherwise name the conflicting associate. Cancel releases the slot and notifies the waitlist.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 · Logical architecture (architecture.md) -->
+    <section class="slide" data-title="Architecture">
+      <p class="kicker">03 · System architecture · logical</p>
+      <h2>App shape — Streamlit, FastAPI, Postgres</h2>
+      <div class="diagram-wrap tall">
+        <svg viewBox="0 0 920 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Logical architecture from architecture.md">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#5ecf9a"/>
+            </marker>
+          </defs>
+          <!-- Streamlit -->
+          <rect x="20" y="120" width="150" height="100" rx="10" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.5"/>
+          <text x="95" y="162" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="15" font-weight="600">Streamlit</text>
+          <text x="95" y="186" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Sans, sans-serif" font-size="12">Frontend</text>
+          <!-- arrows Streamlit <-> FastAPI -->
+          <line x1="170" y1="160" x2="230" y2="160" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="230" y1="180" x2="170" y2="180" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <!-- FastAPI backend box -->
+          <rect x="230" y="40" width="360" height="280" rx="12" fill="#121a17" stroke="#24302a" stroke-width="1.5"/>
+          <text x="410" y="68" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="1">FASTAPI BACKEND</text>
+          <!-- LangGraph -->
+          <rect x="255" y="95" width="160" height="80" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.25"/>
+          <text x="335" y="128" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="14" font-weight="600">LangGraph</text>
+          <text x="335" y="150" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Sans, sans-serif" font-size="12">AI Agent</text>
+          <!-- Scheduler -->
+          <rect x="255" y="210" width="160" height="70" rx="8" fill="#0b1210" stroke="#24302a" stroke-width="1.25"/>
+          <text x="335" y="250" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="14" font-weight="600">Scheduler</text>
+          <!-- LLM -->
+          <rect x="700" y="70" width="190" height="70" rx="10" fill="#0b1210" stroke="#24302a" stroke-width="1.5"/>
+          <text x="795" y="100" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">OpenAI / Groq</text>
+          <text x="795" y="120" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Sans, sans-serif" font-size="11">LLM provider</text>
+          <line x1="415" y1="135" x2="700" y2="105" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <!-- Postgres -->
+          <rect x="700" y="165" width="190" height="70" rx="10" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.5"/>
+          <text x="795" y="195" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">Postgres</text>
+          <text x="795" y="215" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Sans, sans-serif" font-size="11">Docker · bookings</text>
+          <line x1="590" y1="180" x2="700" y2="195" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="700" y1="210" x2="590" y2="200" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <!-- Notifications -->
+          <rect x="700" y="255" width="190" height="70" rx="10" fill="#0b1210" stroke="#24302a" stroke-width="1.5"/>
+          <text x="795" y="282" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">Notifications</text>
+          <text x="795" y="302" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Sans, sans-serif" font-size="11">Brevo hook</text>
+          <line x1="415" y1="245" x2="700" y2="280" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow)"/>
+        </svg>
+        <p class="diagram-caption">Source · architecture.md</p>
+      </div>
+    </section>
+
+    <!-- 6 · AWS architecture (architecture-aws.md) -->
+    <section class="slide" data-title="AWS architecture">
+      <p class="kicker">04 · System architecture · AWS Free Tier</p>
+      <h2>Fully cloud — no laptop in the path</h2>
+      <div class="diagram-wrap tall">
+        <svg viewBox="0 0 980 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AWS architecture from architecture-aws.md">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#5ecf9a"/>
+            </marker>
+          </defs>
+          <!-- Row 1: chat path -->
+          <rect x="20" y="50" width="110" height="56" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.4"/>
+          <text x="75" y="83" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">Browser</text>
+
+          <line x1="130" y1="78" x2="168" y2="78" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+          <rect x="170" y="50" width="140" height="56" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.4"/>
+          <text x="240" y="75" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">EC2 Streamlit</text>
+          <text x="240" y="93" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Mono, monospace" font-size="10">t3.micro · :8501</text>
+
+          <line x1="310" y1="78" x2="348" y2="78" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+          <rect x="350" y="50" width="130" height="56" rx="8" fill="#0b1210" stroke="#24302a" stroke-width="1.4"/>
+          <text x="415" y="83" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">API Gateway</text>
+
+          <line x1="480" y1="78" x2="518" y2="78" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+          <rect x="520" y="50" width="130" height="56" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.4"/>
+          <text x="585" y="75" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">Lambda API</text>
+          <text x="585" y="93" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Mono, monospace" font-size="10">Mangum · agent</text>
+
+          <!-- External + RDS from API -->
+          <line x1="585" y1="106" x2="585" y2="148" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+          <rect x="510" y="150" width="150" height="50" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.4"/>
+          <text x="585" y="180" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">RDS Postgres</text>
+
+          <line x1="650" y1="78" x2="718" y2="78" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+          <rect x="720" y="40" width="110" height="40" rx="8" fill="#0b1210" stroke="#24302a" stroke-width="1.3"/>
+          <text x="775" y="65" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">Groq</text>
+
+          <line x1="650" y1="90" x2="718" y2="118" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+          <rect x="720" y="100" width="110" height="40" rx="8" fill="#0b1210" stroke="#24302a" stroke-width="1.3"/>
+          <text x="775" y="125" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">Brevo</text>
+
+          <!-- Reminder path -->
+          <text x="20" y="250" fill="#8a9a90" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="1">VACATE REMINDER</text>
+
+          <rect x="20" y="265" width="150" height="50" rx="8" fill="#0b1210" stroke="#24302a" stroke-width="1.4"/>
+          <text x="95" y="295" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">EventBridge</text>
+
+          <line x1="170" y1="290" x2="218" y2="290" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+          <rect x="220" y="265" width="170" height="50" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.4"/>
+          <text x="305" y="286" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">Lambda Reminder</text>
+          <text x="305" y="304" text-anchor="middle" fill="#8a9a90" font-family="IBM Plex Mono, monospace" font-size="10">rate(5 min)</text>
+
+          <line x1="390" y1="290" x2="508" y2="200" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+          <line x1="390" y1="290" x2="720" y2="140" stroke="#5ecf9a" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+          <text x="860" y="70" fill="#8a9a90" font-family="IBM Plex Sans, sans-serif" font-size="11">us-east-2</text>
+          <text x="860" y="90" fill="#8a9a90" font-family="IBM Plex Mono, monospace" font-size="10">odc-meeting</text>
+        </svg>
+        <p class="diagram-caption">Source · architecture-aws.md</p>
+      </div>
+      <p class="diagram-note"><strong style="color:var(--ink)">Chat:</strong> Browser → EC2 → API Gateway → Lambda API → RDS (+ Groq/Brevo). &nbsp; <strong style="color:var(--ink)">Reminders:</strong> EventBridge → reminder Lambda → RDS + Brevo.</p>
+    </section>
+
+    <!-- 7 -->
+    <section class="slide" data-title="AI agent">
+      <p class="kicker">05 · LangGraph agent</p>
+      <h2>Tool-calling graph — never writes DB directly</h2>
+      <div class="arch-pair">
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Agent graph from architecture.md">
+            <defs>
+              <marker id="arrow3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="#5ecf9a"/>
+              </marker>
+            </defs>
+            <rect x="120" y="10" width="180" height="36" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.2"/>
+            <text x="210" y="33" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600">User message</text>
+            <line x1="210" y1="46" x2="210" y2="68" stroke="#5ecf9a" stroke-width="1.3" marker-end="url(#arrow3)"/>
+
+            <rect x="95" y="70" width="230" height="36" rx="8" fill="#0b1210" stroke="#24302a" stroke-width="1.2"/>
+            <text x="210" y="93" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="12">Parse intent + entities</text>
+            <line x1="210" y1="106" x2="210" y2="128" stroke="#5ecf9a" stroke-width="1.3" marker-end="url(#arrow3)"/>
+
+            <rect x="145" y="130" width="130" height="36" rx="18" fill="#121a17" stroke="#5ecf9a" stroke-width="1.3"/>
+            <text x="210" y="153" text-anchor="middle" fill="#5ecf9a" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600">Intent</text>
+
+            <!-- tools -->
+            <line x1="145" y1="160" x2="60" y2="200" stroke="#5ecf9a" stroke-width="1.1" marker-end="url(#arrow3)"/>
+            <line x1="175" y1="166" x2="140" y2="200" stroke="#5ecf9a" stroke-width="1.1" marker-end="url(#arrow3)"/>
+            <line x1="210" y1="166" x2="210" y2="200" stroke="#5ecf9a" stroke-width="1.1" marker-end="url(#arrow3)"/>
+            <line x1="245" y1="166" x2="280" y2="200" stroke="#5ecf9a" stroke-width="1.1" marker-end="url(#arrow3)"/>
+            <line x1="275" y1="160" x2="360" y2="200" stroke="#5ecf9a" stroke-width="1.1" marker-end="url(#arrow3)"/>
+
+            <rect x="10" y="202" width="100" height="32" rx="6" fill="#0b1210" stroke="#24302a" stroke-width="1"/>
+            <text x="60" y="222" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Mono, monospace" font-size="9">availability</text>
+            <rect x="115" y="202" width="70" height="32" rx="6" fill="#0b1210" stroke="#24302a" stroke-width="1"/>
+            <text x="150" y="222" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Mono, monospace" font-size="9">book</text>
+            <rect x="190" y="202" width="70" height="32" rx="6" fill="#0b1210" stroke="#24302a" stroke-width="1"/>
+            <text x="225" y="222" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Mono, monospace" font-size="9">extend</text>
+            <rect x="265" y="202" width="70" height="32" rx="6" fill="#0b1210" stroke="#24302a" stroke-width="1"/>
+            <text x="300" y="222" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Mono, monospace" font-size="9">cancel</text>
+            <rect x="340" y="202" width="70" height="32" rx="6" fill="#0b1210" stroke="#24302a" stroke-width="1"/>
+            <text x="375" y="222" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Mono, monospace" font-size="9">insights</text>
+
+            <line x1="150" y1="234" x2="150" y2="262" stroke="#e6b35c" stroke-width="1.2" marker-end="url(#arrow3)"/>
+            <text x="168" y="252" fill="#e6b35c" font-family="IBM Plex Mono, monospace" font-size="9">conflict</text>
+            <rect x="95" y="264" width="140" height="32" rx="6" fill="#0b1210" stroke="#e6b35c" stroke-width="1.2"/>
+            <text x="165" y="284" text-anchor="middle" fill="#e6b35c" font-family="IBM Plex Mono, monospace" font-size="10">suggest_alternatives</text>
+
+            <line x1="60" y1="234" x2="210" y2="318" stroke="#5ecf9a" stroke-width="1.1"/>
+            <line x1="165" y1="296" x2="210" y2="318" stroke="#5ecf9a" stroke-width="1.1"/>
+            <line x1="225" y1="234" x2="210" y2="318" stroke="#5ecf9a" stroke-width="1.1"/>
+            <line x1="300" y1="234" x2="210" y2="318" stroke="#5ecf9a" stroke-width="1.1"/>
+            <line x1="375" y1="234" x2="210" y2="318" stroke="#5ecf9a" stroke-width="1.1" marker-end="url(#arrow3)"/>
+
+            <rect x="100" y="320" width="220" height="36" rx="8" fill="#0b1210" stroke="#5ecf9a" stroke-width="1.2"/>
+            <text x="210" y="343" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600">Compose NL reply</text>
+            <line x1="210" y1="356" x2="210" y2="378" stroke="#5ecf9a" stroke-width="1.3" marker-end="url(#arrow3)"/>
+            <rect x="120" y="380" width="180" height="32" rx="8" fill="#121a17" stroke="#24302a" stroke-width="1.2"/>
+            <text x="210" y="400" text-anchor="middle" fill="#e7ece7" font-family="IBM Plex Sans, sans-serif" font-size="12">Response to user</text>
+          </svg>
+          <p class="diagram-caption">Source · architecture.md agent graph</p>
+        </div>
+        <div>
+          <p class="lede" style="margin-bottom:0.85rem">Hard boundary: the LLM extracts intent; tools call booking services.</p>
+          <div class="panel" style="padding:0; overflow:hidden">
+            <table class="dense">
+              <thead><tr><th>Tool</th><th>Maps to</th></tr></thead>
+              <tbody>
+                <tr><td>check_availability</td><td style="color:var(--ink);font-family:var(--sans)">Availability</td></tr>
+                <tr><td>create_booking</td><td style="color:var(--ink);font-family:var(--sans)">NL booking</td></tr>
+                <tr><td>suggest_alternatives</td><td style="color:var(--ink);font-family:var(--sans)">Conflicts</td></tr>
+                <tr><td>extend_booking</td><td style="color:var(--ink);font-family:var(--sans)">Extend</td></tr>
+                <tr><td>cancel_booking</td><td style="color:var(--ink);font-family:var(--sans)">Cancel</td></tr>
+                <tr><td>get_utilization_summary</td><td style="color:var(--ink);font-family:var(--sans)">Insights</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small" style="margin-top:0.7rem">Clarify before mutations. Off-topic redirects; named dates grounded before booking.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="slide" data-title="Domain rules">
+      <p class="kicker">06 · Booking domain</p>
+      <h2>Rules that survive a wrong LLM answer</h2>
+      <div class="grid cols-3">
+        <div class="panel">
+          <h3>Deterministic</h3>
+          <ul class="clean">
+            <li>Overlap on <code>[start, end)</code></li>
+            <li>Same-day alternatives</li>
+            <li>Extend only if free</li>
+            <li>Cancel → waitlist notify</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Persistence</h3>
+          <ul class="clean">
+            <li>Associate · Booking · Waitlist · Room</li>
+            <li>UTC timestamptz</li>
+            <li><code>CHECK (end &gt; start)</code></li>
+            <li>Postgres <code>EXCLUDE USING gist</code></li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Brevo templates</h3>
+          <ul class="clean">
+            <li>booking.confirmed</li>
+            <li>booking.extended / cancelled</li>
+            <li>booking.vacate_reminder</li>
+            <li>waitlist.slot_available</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="slide" data-title="Key flows">
+      <p class="kicker">07 · Key request flows</p>
+      <h2>Four paths that matter in a demo</h2>
+      <div class="grid cols-2">
+        <div class="panel">
+          <h3>Availability + book</h3>
+          <p class="small">Extract slot → check_availability → create_booking → Brevo confirmation.</p>
+        </div>
+        <div class="panel">
+          <h3>Conflict + alternatives</h3>
+          <p class="small">create_booking fails → suggest_alternatives → list free windows.</p>
+        </div>
+        <div class="panel">
+          <h3>Vacate reminder</h3>
+          <p class="small">Job finds end in 15 min with back-to-back next booking → email → set reminder_sent_at.</p>
+        </div>
+        <div class="panel">
+          <h3>Extend / cancel</h3>
+          <p class="small">Resolve “my meeting” by associate → extend if free, or cancel and wake waitlist.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9 -->
+    <section class="slide" data-title="Stack">
+      <p class="kicker">08 · Technology stack</p>
+      <h2>Pragmatic stack for a Free Tier demo</h2>
+      <div class="panel" style="padding:0; overflow:hidden">
+        <table class="dense">
+          <thead><tr><th>Layer</th><th>Technology</th></tr></thead>
+          <tbody>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Frontend</td><td style="color:var(--ink);font-family:var(--sans)">Streamlit (chat + calendar)</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Backend</td><td style="color:var(--ink);font-family:var(--sans)">Python 3.11+, FastAPI</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">AI</td><td style="color:var(--ink);font-family:var(--sans)">LangChain / LangGraph + Groq</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Database</td><td style="color:var(--ink);font-family:var(--sans)">PostgreSQL (Docker · RDS)</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Email</td><td style="color:var(--ink);font-family:var(--sans)">Brevo transactional templates</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Cloud UI</td><td style="color:var(--ink);font-family:var(--sans)">EC2 t3.micro + systemd</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Cloud API</td><td style="color:var(--ink);font-family:var(--sans)">Lambda (Mangum) + API Gateway HTTP API</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Reminders</td><td style="color:var(--ink);font-family:var(--sans)">EventBridge rate(5 min) → reminder Lambda</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section class="slide" data-title="AWS Free Tier">
+      <p class="kicker">09 · AWS Free Tier notes</p>
+      <h2>Locked Free Tier choices</h2>
+      <div class="grid cols-3">
+        <div class="stat"><div class="label">Compute</div><div class="value">t3.micro</div><div class="hint">EC2 UI + RDS each</div></div>
+        <div class="stat"><div class="label">Reminders</div><div class="value">5 min</div><div class="hint">EventBridge poll</div></div>
+        <div class="stat"><div class="label">Lambda DB</div><div class="value">NullPool</div><div class="hint">Short-lived connections</div></div>
+      </div>
+      <div class="panel" style="margin-top:0.25rem">
+        <h3>What we skipped</h3>
+        <p class="small" style="margin-top:0.4rem">NAT, ALB, RDS Proxy, CloudWatch dashboards/alarms, Secrets Manager / SSM, Cognito, multi-AZ — keep the demo inside Free Tier.</p>
+      </div>
+      <p class="diagram-note">Full topology is on the previous AWS architecture slide (from <code>architecture-aws.md</code>).</p>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide" data-title="Live environment">
+      <p class="kicker">10 · Live environment</p>
+      <h2>Open the UI in a browser — no local install</h2>
+      <div class="panel" style="padding:0; overflow:hidden">
+        <table class="dense">
+          <thead><tr><th>What</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Region</td><td style="color:var(--ink);font-family:var(--mono)">us-east-2</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Stack</td><td style="color:var(--ink);font-family:var(--mono)">odc-meeting</td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Streamlit</td><td><a class="live" href="http://18.222.179.17:8501" target="_blank" rel="noopener">http://18.222.179.17:8501</a></td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">API</td><td><a class="live" href="https://pzjiegjp46.execute-api.us-east-2.amazonaws.com" target="_blank" rel="noopener">https://pzjiegjp46.execute-api.us-east-2.amazonaws.com</a></td></tr>
+            <tr><td style="color:var(--ink);font-family:var(--sans)">Health</td><td><a class="live" href="https://pzjiegjp46.execute-api.us-east-2.amazonaws.com/health" target="_blank" rel="noopener">…/health</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small"><strong style="color:var(--ink)">Deploy:</strong> BootstrapMode ECR+RDS → build &amp; push image → full deploy → /health init_db → migrate_rds.py</p>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide" data-title="Delivery">
+      <p class="kicker">11 · Delivery phases</p>
+      <h2>Built in five phases</h2>
+      <div class="two-col">
+        <div class="panel" style="padding:0; overflow:hidden">
+          <table class="dense">
+            <thead><tr><th>Phase</th><th>Scope</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td style="color:var(--ink);font-family:var(--sans)">Core booking — models, overlap, REST, calendar</td></tr>
+              <tr><td>2</td><td style="color:var(--ink);font-family:var(--sans)">AI agent — LangGraph + tools; chat UI</td></tr>
+              <tr><td>3</td><td style="color:var(--ink);font-family:var(--sans)">Notifications — Brevo + vacate scheduler</td></tr>
+              <tr><td>4</td><td style="color:var(--ink);font-family:var(--sans)">Waitlist &amp; insights</td></tr>
+              <tr><td>5</td><td style="color:var(--ink);font-family:var(--sans)">Hardening — exclusion, tests, auth polish</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>Out of scope (initial)</h3>
+          <ul class="clean">
+            <li>Multi-room product</li>
+            <li>Recurring bookings</li>
+            <li>Graph calendar sync</li>
+            <li>Zapier Brevo→Teams</li>
+            <li>Mobile-native clients</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 13 -->
+    <section class="slide" data-title="Takeaways">
+      <p class="kicker">12 · Takeaways</p>
+      <h2>What to remember</h2>
+      <div class="grid cols-2">
+        <div class="panel accent">
+          <h3>Product</h3>
+          <p class="small">One shared ODC room, booked in natural language, with hard conflict prevention and operational reminders.</p>
+        </div>
+        <div class="panel">
+          <h3>Architecture</h3>
+          <p class="small">Agent proposes; booking service decides. Postgres exclusion constraint is the last line of defense.</p>
+        </div>
+        <div class="panel">
+          <h3>Cloud</h3>
+          <p class="small">Free Tier EC2 + Lambda + RDS + EventBridge — fully browsable demo without a local runtime.</p>
+        </div>
+        <div class="panel">
+          <h3>Demo tip</h3>
+          <p class="small">
+            Open <a class="live" href="http://18.222.179.17:8501" target="_blank" rel="noopener">http://18.222.179.17:8501</a>
+            → set name/email in the sidebar → Chat → book a weekday slot → check Brevo transactional logs.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="chrome">
+    <div class="brand">ODC Meeting Room Booking Assistant</div>
+    <div class="progress" aria-hidden="true"><span id="bar"></span></div>
+    <div class="nav">
+      <button type="button" id="prev" aria-label="Previous slide">←</button>
+      <button type="button" id="next" aria-label="Next slide">→</button>
+      <div class="counter" id="counter">1 / 13</div>
+    </div>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const bar = document.getElementById("bar");
+    const counter = document.getElementById("counter");
+    const prevBtn = document.getElementById("prev");
+    const nextBtn = document.getElementById("next");
+    let i = 0;
+
+    function show(n) {
+      i = Math.max(0, Math.min(slides.length - 1, n));
+      slides.forEach((s, idx) => s.classList.toggle("active", idx === i));
+      bar.style.width = ((i + 1) / slides.length * 100) + "%";
+      counter.textContent = (i + 1) + " / " + slides.length;
+      prevBtn.disabled = i === 0;
+      nextBtn.disabled = i === slides.length - 1;
+      history.replaceState(null, "", "#" + (i + 1));
+      document.title = slides[i].dataset.title + " · ODC Booking Assistant";
+    }
+
+    function next() { show(i + 1); }
+    function prev() { show(i - 1); }
+
+    prevBtn.addEventListener("click", prev);
+    nextBtn.addEventListener("click", next);
+
+    window.addEventListener("keydown", (e) => {
+      if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(e.key)) {
+        e.preventDefault();
+        next();
+      } else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(e.key)) {
+        e.preventDefault();
+        prev();
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        show(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        show(slides.length - 1);
+      } else if (e.key === "f" || e.key === "F") {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+        else document.exitFullscreen?.();
+      }
+    });
+
+    const hash = parseInt(location.hash.replace("#", ""), 10);
+    show(Number.isFinite(hash) && hash >= 1 ? hash - 1 : 0);
+  </script>
+</body>
+</html>

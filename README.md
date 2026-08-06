@@ -8,7 +8,7 @@ Region **`us-east-2`**, CloudFormation stack **`odc-meeting`**.
 
 | What | URL |
 |---|---|
-| **Streamlit UI** | http://18.220.50.230:8501 |
+| **Streamlit UI** | http://18.222.179.17:8501 |
 | **API (HTTP API Gateway)** | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com |
 | **Health** | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com/health |
 
