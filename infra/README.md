@@ -15,7 +15,7 @@ Fully cloud stack from [`architecture-aws.md`](../architecture-aws.md):
 | What | Value |
 |---|---|
 | Region | `us-east-2` |
-| Streamlit | http://18.222.179.17:8501 |
+| Streamlit | http://3.22.240.33:8501 |
 | API | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com |
 | Health | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com/health |
 | RDS endpoint | `odc-meeting-room.cfc04mss8inc.us-east-2.rds.amazonaws.com` |

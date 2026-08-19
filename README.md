@@ -8,7 +8,7 @@ Region **`us-east-2`**, CloudFormation stack **`odc-meeting`**.
 
 | What | URL |
 |---|---|
-| **Streamlit UI** | http://18.222.179.17:8501 |
+| **Streamlit UI** | http://3.22.240.33:8501 |
 | **API (HTTP API Gateway)** | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com |
 | **Health** | https://pzjiegjp46.execute-api.us-east-2.amazonaws.com/health |
 
@@ -116,7 +116,7 @@ BootstrapMode=true ./infra/scripts/deploy.sh
 Lambda handlers (no deploy required to unit-test): `app.lambda_handlers.api_handler` and `app.lambda_handlers.reminder_handler`. Set `RUNNING_IN_LAMBDA=true` on AWS so APScheduler stays off and DB uses short-lived connections. Locally keep it false and run `uvicorn` as usual.
 
 - `API_BASE_URL` — FastAPI base URL for the Streamlit UI (default `http://127.0.0.1:8000`)
-- For the LangGraph agent (live LLM calls), set `GROQ_API_KEY` (recommended free tier), or `OPENAI_API_KEY`, or Azure OpenAI vars (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`). Unit tests mock the model and do not call the network.
+- For the LangGraph agent (live LLM calls), set `GROQ_API_KEY` (recommended free tier), or `OPENAI_API_KEY`, or Azure OpenAI vars (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`). Optional: `GROQ_MODEL` (default `openai/gpt-oss-120b`; Groq retired `llama-3.3-70b-versatile` in Aug 2026). Unit tests mock the model and do not call the network.
 
 ### Email (Brevo)
 

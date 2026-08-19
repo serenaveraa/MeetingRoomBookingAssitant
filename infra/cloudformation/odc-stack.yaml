@@ -97,7 +97,7 @@ Parameters:
 
   GroqModel:
     Type: String
-    Default: llama-3.3-70b-versatile
+    Default: openai/gpt-oss-120b
 
   BrevoApiKey:
     Type: String

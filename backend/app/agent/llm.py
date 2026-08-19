@@ -18,7 +18,7 @@ def get_chat_model(*, temperature: float = 0.0):
     groq_key = (settings.groq_api_key or "").strip()
     if groq_key:
         return ChatOpenAI(
-            model=(settings.groq_model or "llama-3.3-70b-versatile").strip(),
+            model=(settings.groq_model or "openai/gpt-oss-120b").strip(),
             api_key=groq_key,
             base_url=GROQ_OPENAI_BASE_URL,
             temperature=temperature,

@@ -3,7 +3,7 @@
   "AllowedSshCidr": "203.0.113.10/32",
   "DbPassword": "ChangeMeAlphanumericOnly1",
   "GroqApiKey": "",
-  "GroqModel": "llama-3.3-70b-versatile",
+  "GroqModel": "openai/gpt-oss-120b",
   "BrevoApiKey": "",
   "BrevoSenderEmail": "",
   "BrevoSenderName": "ODC Meeting Room",
